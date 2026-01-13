@@ -3422,7 +3422,7 @@ h6 { font-size: 1rem; }
     display: flex;
     flex-direction: column;
     height: auto; /* Auto height to fit content */
-    min-height: 250px; /* Minimum height to ensure button is visible */
+    min-height: 200px; /* Minimum height to ensure button is visible */
     max-height: 350px; /* Cap maximum height */
     overflow: hidden;
 }
@@ -4333,4 +4333,203 @@ h6 { font-size: 1rem; }
     .cart-header h4 {
         color: #000 !important;
     }
+}
+/* ===== RECEIPT PRINTING STYLES ===== */
+.receipt-print-page {
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    margin: 0;
+    padding: 15px;
+    background: white;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+}
+
+.receipt-container {
+    width: 100%;
+    max-width: 300px;
+    margin: 0 auto;
+}
+
+.receipt-header {
+    text-align: center;
+    border-bottom: 2px dashed #000;
+    padding-bottom: 10px;
+    margin-bottom: 10px;
+}
+
+.receipt-header h2 {
+    margin: 5px 0;
+    font-size: 16px;
+    font-weight: bold;
+}
+
+.receipt-header p {
+    margin: 3px 0;
+    font-size: 11px;
+}
+
+.receipt-divider {
+    border-bottom: 1px dashed #000;
+    margin: 8px 0;
+}
+
+.receipt-info {
+    margin: 10px 0;
+}
+
+.receipt-info-row {
+    display: flex;
+    justify-content: space-between;
+    margin: 3px 0;
+    font-size: 11px;
+}
+
+.receipt-items-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10px 0;
+    font-size: 11px;
+}
+
+.receipt-items-table th,
+.receipt-items-table td {
+    border-bottom: 1px solid #ddd;
+    padding: 5px 3px;
+    text-align: left;
+}
+
+.receipt-items-table th {
+    border-bottom: 2px solid #000;
+    font-weight: bold;
+}
+
+.receipt-items-table .text-center {
+    text-align: center;
+}
+
+.receipt-items-table .text-right {
+    text-align: right;
+}
+
+.receipt-totals {
+    margin-top: 10px;
+}
+
+.receipt-total-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 3px 0;
+    font-size: 11px;
+}
+
+.receipt-grand-total {
+    font-weight: bold;
+    font-size: 13px;
+    border-top: 2px solid #000;
+    padding-top: 8px;
+    margin-top: 8px;
+    display: flex;
+    justify-content: space-between;
+}
+
+.receipt-footer {
+    text-align: center;
+    margin-top: 15px;
+    padding-top: 10px;
+    border-top: 2px dashed #000;
+    font-size: 10px;
+}
+
+.print-message {
+    text-align: center;
+    padding: 10px;
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    margin: 10px 0;
+    font-size: 11px;
+    color: #6c757d;
+}
+
+/* Print-specific styles */
+@media print {
+    body, .receipt-print-page {
+        font-family: 'Courier New', monospace !important;
+        font-size: 12px !important;
+        margin: 0 !important;
+        padding: 15px !important;
+        background: white !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+    }
+    
+    .no-print {
+        display: none !important;
+    }
+    
+    .receipt-container {
+        width: 100% !important;
+        max-width: 300px !important;
+        margin: 0 auto !important;
+    }
+    
+    .print-message {
+        display: none !important;
+    }
+}
+
+/* Print Options Modal Styles */
+.print-option-card {
+    background: var(--card-bg);
+    border: 2px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    cursor: pointer;
+    transition: var(--transition-normal);
+    height: 100%;
+}
+
+.print-option-card:hover {
+    border-color: var(--primary-blue);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.print-option-card.selected {
+    border-color: var(--primary-blue);
+    background: rgba(41, 171, 135, 0.05);
+}
+
+.print-option-icon {
+    font-size: 2.5rem;
+    color: var(--primary-blue);
+    margin-bottom: 1rem;
+}
+
+.printer-status {
+    padding: 0.75rem;
+    border-radius: var(--radius-md);
+    text-align: center;
+    font-weight: 600;
+}
+
+.printer-connected {
+    background: rgba(40, 167, 69, 0.1);
+    color: var(--success-color);
+    border: 1px solid rgba(40, 167, 69, 0.3);
+}
+
+.printer-disconnected {
+    background: rgba(220, 53, 69, 0.1);
+    color: var(--error-color);
+    border: 1px solid rgba(220, 53, 69, 0.3);
+}
+
+/* Carried forward product styling */
+.carried-product {
+    border-left: 4px solid var(--info-color);
+}
+
+.carried-cart-item {
+    border-left: 4px solid var(--info-color);
 }

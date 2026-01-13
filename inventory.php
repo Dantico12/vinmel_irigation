@@ -2,22 +2,27 @@
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
-// Use your existing config structure
-require_once 'config.php'; // This contains Database class and session start
+require_once 'config.php';
 session_start();
 
-// Check authentication - CORRECTED VERSION
+// Check authentication
 if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php");
-    exit();
+    // Check if this is an API call
+    if (isset($_GET['action']) && $_GET['action'] !== '') {
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'message' => 'Unauthorized']);
+        exit();
+    } else {
+        header("Location: login.php");
+        exit();
+    }
 }
 
 $database = new Database();
 $db = $database->getConnection();
-$user_id = $_SESSION['user_id'] ?? null; // Use null coalescing operator
+$user_id = $_SESSION['user_id'] ?? null;
 $user_role = $_SESSION['role'] ?? 'admin';
 
-// Check if user_id is set
 if (!$user_id) {
     header("Location: login.php");
     exit();
@@ -30,388 +35,515 @@ $error = '';
    INVENTORY PERIOD MANAGEMENT FUNCTIONS
 -------------------------------------------------------- */
 
-// Function to create inventory tables if not exists
-function createInventoryTables($db) {
-    // Check if tables already exist
-    $check_periods = $db->query("SHOW TABLES LIKE 'inventory_periods'");
-    if ($check_periods->num_rows == 0) {
-        $create_periods_table = "
-        CREATE TABLE inventory_periods (
-            id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            user_id INT(11) NOT NULL,
-            period_month VARCHAR(7) NOT NULL,
-            opening_balance DECIMAL(15,2) DEFAULT 0.00,
-            current_inventory DECIMAL(15,2) DEFAULT 0.00,
-            closing_balance DECIMAL(15,2) DEFAULT 0.00,
-            total_sales DECIMAL(15,2) DEFAULT 0.00,
-            total_profit DECIMAL(15,2) DEFAULT 0.00,
-            status ENUM('active', 'closed', 'future') DEFAULT 'active',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-            UNIQUE KEY unique_user_period (user_id, period_month)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
-        
-        $db->query($create_periods_table);
-    }
+// Get all inventory periods (now global)
+function getAllInventoryPeriods($db) {
+    $periods = [];
     
-    $check_carry = $db->query("SHOW TABLES LIKE 'period_stock_carry'");
-    if ($check_carry->num_rows == 0) {
-        $create_carry_table = "
-        CREATE TABLE period_stock_carry (
-            id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            period_id INT(11) NOT NULL,
-            product_id INT(11) NOT NULL,
-            quantity INT(11) NOT NULL,
-            cost_price DECIMAL(10,2) NOT NULL,
-            carried_value DECIMAL(15,2) NOT NULL,
-            carried_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (period_id) REFERENCES inventory_periods(id) ON DELETE CASCADE,
-            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
-            KEY idx_period_product (period_id, product_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
-        
-        $db->query($create_carry_table);
-    }
-}
-
-// Initialize tables
-createInventoryTables($db);
-
-// Get all inventory periods for current user
-function getAllInventoryPeriods($db, $user_id, $user_role = 'admin') {
-    if ($user_role === 'super_admin') {
-        $sql = "SELECT ip.*, u.name as user_name 
-                FROM inventory_periods ip
-                LEFT JOIN users u ON ip.user_id = u.id
-                ORDER BY ip.period_month DESC, ip.user_id";
-        $stmt = $db->prepare($sql);
-        if ($stmt) {
-            $stmt->execute();
-        } else {
-            return [];
-        }
-    } else {
-        $sql = "SELECT * FROM inventory_periods 
-                WHERE user_id = ? 
-                ORDER BY period_month DESC";
-        $stmt = $db->prepare($sql);
-        if ($stmt) {
-            $stmt->bind_param("i", $user_id);
-            $stmt->execute();
-        } else {
-            return [];
-        }
-    }
+    $sql = "SELECT 
+                ip.*,
+                tp.period_name,
+                tp.year,
+                tp.month,
+                CONCAT(tp.year, '-', LPAD(tp.month, 2, '0')) as period_month_display,
+                tp.is_locked
+            FROM inventory_periods ip
+            JOIN time_periods tp ON ip.time_period_id = tp.id
+            ORDER BY tp.year DESC, tp.month DESC";
     
+    $stmt = $db->prepare($sql);
     if ($stmt) {
+        $stmt->execute();
         $result = $stmt->get_result();
-        $periods = [];
+        
         while ($row = $result->fetch_assoc()) {
             $periods[] = $row;
         }
-        return $periods;
-    }
-    return [];
-}
-
-// Get previous inventory period
-function getPreviousInventoryPeriod($db, $user_id, $current_period_month) {
-    $sql = "SELECT * FROM inventory_periods 
-            WHERE user_id = ? AND period_month < ?
-            ORDER BY period_month DESC LIMIT 1";
-    $stmt = $db->prepare($sql);
-    if ($stmt) {
-        $stmt->bind_param("is", $user_id, $current_period_month);
-        $stmt->execute();
-        return $stmt->get_result()->fetch_assoc();
-    }
-    return null;
-}
-
-// Get next inventory period
-function getNextInventoryPeriod($db, $user_id, $current_period_month) {
-    $sql = "SELECT * FROM inventory_periods 
-            WHERE user_id = ? AND period_month > ?
-            ORDER BY period_month ASC LIMIT 1";
-    $stmt = $db->prepare($sql);
-    if ($stmt) {
-        $stmt->bind_param("is", $user_id, $current_period_month);
-        $stmt->execute();
-        return $stmt->get_result()->fetch_assoc();
-    }
-    return null;
-}
-
-// Calculate current inventory value for a specific period
-function calculateCurrentInventoryValue($db, $user_id, $period_month = null) {
-    if ($period_month) {
-        list($year, $month) = explode('-', $period_month);
-        $sql = "SELECT SUM(p.stock_quantity * p.cost_price) as total_value 
-                FROM products p 
-                WHERE p.created_by = ? 
-                AND YEAR(p.created_at) = ? 
-                AND MONTH(p.created_at) = ?";
-        $stmt = $db->prepare($sql);
-        if ($stmt) {
-            $stmt->bind_param("iss", $user_id, $year, $month);
-            $stmt->execute();
-            $result = $stmt->get_result()->fetch_assoc();
-            return $result['total_value'] ?? 0;
-        }
-    } else {
-        $sql = "SELECT SUM(stock_quantity * cost_price) as total_value 
-                FROM products WHERE created_by = ?";
-        $stmt = $db->prepare($sql);
-        if ($stmt) {
-            $stmt->bind_param("i", $user_id);
-            $stmt->execute();
-            $result = $stmt->get_result()->fetch_assoc();
-            return $result['total_value'] ?? 0;
-        }
-    }
-    return 0;
-}
-
-// Get or create current inventory period
-function getOrCreateInventoryPeriod($db, $user_id) {
-    $current_month = date('Y-m');
-    
-    // Check if current period exists
-    $sql = "SELECT * FROM inventory_periods 
-            WHERE user_id = ? AND period_month = ?";
-    $stmt = $db->prepare($sql);
-    if (!$stmt) return null;
-    
-    $stmt->bind_param("is", $user_id, $current_month);
-    $stmt->execute();
-    $current_period = $stmt->get_result()->fetch_assoc();
-    
-    if (!$current_period) {
-        // Get previous period for opening balance
-        $previous_period = getPreviousInventoryPeriod($db, $user_id, $current_month);
-        $opening_balance = $previous_period ? ($previous_period['closing_balance'] ?? 0) : 0;
-        
-        // Calculate current inventory value
-        $current_inventory = calculateCurrentInventoryValue($db, $user_id, $current_month);
-        $closing_balance = $opening_balance + $current_inventory;
-        
-        // Insert new period
-        $insert_sql = "INSERT INTO inventory_periods 
-                      (user_id, period_month, opening_balance, current_inventory, closing_balance, status) 
-                      VALUES (?, ?, ?, ?, ?, 'active')";
-        $stmt = $db->prepare($insert_sql);
-        if (!$stmt) return null;
-        
-        $stmt->bind_param("isddd", $user_id, $current_month, $opening_balance, $current_inventory, $closing_balance);
-        
-        if ($stmt->execute()) {
-            $period_id = $stmt->insert_id;
-            
-            // Carry forward stock from previous period if exists
-            if ($previous_period) {
-                carryForwardStock($db, $user_id, $previous_period['id'], $period_id);
-            }
-            
-            // Get the newly created period
-            return [
-                'id' => $period_id,
-                'user_id' => $user_id,
-                'period_month' => $current_month,
-                'opening_balance' => $opening_balance,
-                'current_inventory' => $current_inventory,
-                'closing_balance' => $closing_balance,
-                'status' => 'active'
-            ];
-        }
-    } else {
-        // Update existing period with current values
-        $current_inventory = calculateCurrentInventoryValue($db, $user_id, $current_month);
-        $closing_balance = $current_period['opening_balance'] + $current_inventory;
-        
-        // Update if values have changed
-        if ($current_period['current_inventory'] != $current_inventory || 
-            $current_period['closing_balance'] != $closing_balance) {
-            
-            $update_sql = "UPDATE inventory_periods 
-                          SET current_inventory = ?, closing_balance = ?, updated_at = NOW()
-                          WHERE id = ?";
-            $stmt = $db->prepare($update_sql);
-            if ($stmt) {
-                $stmt->bind_param("ddi", $current_inventory, $closing_balance, $current_period['id']);
-                $stmt->execute();
-            }
-            
-            $current_period['current_inventory'] = $current_inventory;
-            $current_period['closing_balance'] = $closing_balance;
-        }
-        
-        return $current_period;
     }
     
-    return null;
-}
-
-// Carry forward stock to new period
-function carryForwardStock($db, $user_id, $previous_period_id, $current_period_id) {
-    // Get products with remaining stock from previous period
-    $sql = "SELECT p.id, p.stock_quantity, p.cost_price 
-            FROM products p 
-            WHERE p.created_by = ? AND p.stock_quantity > 0";
-    $stmt = $db->prepare($sql);
-    if (!$stmt) return;
-    
-    $stmt->bind_param("i", $user_id);
-    $stmt->execute();
-    $products = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
-    
-    foreach ($products as $product) {
-        $carried_value = $product['stock_quantity'] * $product['cost_price'];
-        
-        $carry_sql = "INSERT INTO period_stock_carry 
-                     (period_id, product_id, quantity, cost_price, carried_value) 
-                     VALUES (?, ?, ?, ?, ?)";
-        $stmt_carry = $db->prepare($carry_sql);
-        if (!$stmt_carry) continue;
-        
-        $stmt_carry->bind_param("iiidd", 
-            $current_period_id, 
-            $product['id'], 
-            $product['stock_quantity'], 
-            $product['cost_price'],
-            $carried_value
-        );
-        $stmt_carry->execute();
-    }
+    return $periods;
 }
 
 // Get inventory period by ID
-function getInventoryPeriodById($db, $period_id, $user_id, $user_role = 'admin') {
-    if ($user_role === 'super_admin') {
-        $sql = "SELECT ip.*, u.name as user_name 
-                FROM inventory_periods ip
-                LEFT JOIN users u ON ip.user_id = u.id
-                WHERE ip.id = ?";
-        $stmt = $db->prepare($sql);
-        if ($stmt) {
-            $stmt->bind_param("i", $period_id);
-        }
-    } else {
-        $sql = "SELECT * FROM inventory_periods WHERE id = ? AND user_id = ?";
-        $stmt = $db->prepare($sql);
-        if ($stmt) {
-            $stmt->bind_param("ii", $period_id, $user_id);
-        }
-    }
-    
-    if ($stmt) {
-        $stmt->execute();
-        return $stmt->get_result()->fetch_assoc();
-    }
-    return null;
-}
-
-// Get carried forward products for a period
-function getCarriedForwardProducts($db, $period_id) {
-    $sql = "SELECT psc.*, p.name, p.sku, c.name as category_name
-            FROM period_stock_carry psc
-            JOIN products p ON psc.product_id = p.id
-            LEFT JOIN categories c ON p.category_id = c.id
-            WHERE psc.period_id = ?
-            ORDER BY p.name ASC";
+function getInventoryPeriodById($db, $period_id) {
+    $sql = "SELECT 
+                ip.*,
+                tp.period_name,
+                tp.year,
+                tp.month,
+                CONCAT(tp.year, '-', LPAD(tp.month, 2, '0')) as period_month_display
+            FROM inventory_periods ip
+            JOIN time_periods tp ON ip.time_period_id = tp.id
+            WHERE ip.id = ?";
     
     $stmt = $db->prepare($sql);
     if ($stmt) {
         $stmt->bind_param("i", $period_id);
         $stmt->execute();
-        return $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        return $stmt->get_result()->fetch_assoc();
     }
-    return [];
+    return null;
 }
 
-// Calculate period sales data
-function calculatePeriodSalesData($db, $user_id, $period_month) {
+// Get current inventory period
+function getCurrentInventoryPeriod($db) {
+    $current_month = date('Y-m');
+    
     $sql = "SELECT 
-                COALESCE(SUM(ti.total_price), 0) as total_sales,
-                COALESCE(SUM(ti.total_price - (ti.quantity * p.cost_price)), 0) as total_profit,
-                COALESCE(SUM(ti.quantity), 0) as total_sold_quantity
-            FROM transaction_items ti
-            JOIN products p ON ti.product_id = p.id
-            JOIN transactions t ON ti.transaction_id = t.id
-            WHERE p.created_by = ? AND DATE_FORMAT(t.transaction_date, '%Y-%m') = ?";
+                ip.*,
+                tp.period_name
+            FROM inventory_periods ip
+            JOIN time_periods tp ON ip.time_period_id = tp.id
+            WHERE CONCAT(tp.year, '-', LPAD(tp.month, 2, '0')) = ?
+            ORDER BY tp.year DESC, tp.month DESC
+            LIMIT 1";
     
     $stmt = $db->prepare($sql);
     if ($stmt) {
-        $stmt->bind_param("is", $user_id, $period_month);
+        $stmt->bind_param("s", $current_month);
+        $stmt->execute();
+        $period = $stmt->get_result()->fetch_assoc();
+        
+        if (!$period) {
+            // Get the most recent period
+            $recent_sql = "SELECT 
+                            ip.*,
+                            tp.period_name
+                          FROM inventory_periods ip
+                          JOIN time_periods tp ON ip.time_period_id = tp.id
+                          ORDER BY tp.year DESC, tp.month DESC
+                          LIMIT 1";
+            $recent_stmt = $db->prepare($recent_sql);
+            $recent_stmt->execute();
+            $period = $recent_stmt->get_result()->fetch_assoc();
+        }
+        
+        return $period;
+    }
+    return null;
+}
+
+// Calculate inventory value for period
+function calculatePeriodInventoryValue($db, $time_period_id) {
+    $sql = "SELECT SUM(stock_quantity * cost_price) as total_value 
+            FROM products 
+            WHERE period_id = ?";
+    
+    $stmt = $db->prepare($sql);
+    $stmt->bind_param("i", $time_period_id);
+    $stmt->execute();
+    $result = $stmt->get_result()->fetch_assoc();
+    return $result['total_value'] ?? 0;
+}
+
+// Get or create inventory period - FIXED VERSION
+function getOrCreateInventoryPeriod($db, $time_period_id) {
+    // First, get the time period details
+    $time_period_sql = "SELECT * FROM time_periods WHERE id = ?";
+    $time_stmt = $db->prepare($time_period_sql);
+    $time_stmt->bind_param("i", $time_period_id);
+    $time_stmt->execute();
+    $current_time_period = $time_stmt->get_result()->fetch_assoc();
+    
+    if (!$current_time_period) {
+        return null;
+    }
+    
+    // Check if inventory period already exists
+    $sql = "SELECT * FROM inventory_periods WHERE time_period_id = ?";
+    $stmt = $db->prepare($sql);
+    $stmt->bind_param("i", $time_period_id);
+    $stmt->execute();
+    $period = $stmt->get_result()->fetch_assoc();
+    
+    if (!$period) {
+        // Get previous period's closing balance - FIXED QUERY
+        $prev_sql = "SELECT ip.closing_balance 
+                     FROM inventory_periods ip
+                     JOIN time_periods tp ON ip.time_period_id = tp.id
+                     WHERE (tp.year < ?) OR (tp.year = ? AND tp.month < ?)
+                     ORDER BY tp.year DESC, tp.month DESC 
+                     LIMIT 1";
+        $prev_stmt = $db->prepare($prev_sql);
+        $prev_stmt->bind_param("iii", 
+            $current_time_period['year'], 
+            $current_time_period['year'], 
+            $current_time_period['month']
+        );
+        $prev_stmt->execute();
+        $prev_result = $prev_stmt->get_result();
+        $prev_period = $prev_result->fetch_assoc();
+        
+        $opening_balance = $prev_period ? $prev_period['closing_balance'] : 0;
+        
+        // Calculate current inventory from products
+        $current_inventory = calculatePeriodInventoryValue($db, $time_period_id);
+        $closing_balance = $opening_balance + $current_inventory;
+        
+        // Create new period
+        $insert_sql = "INSERT INTO inventory_periods 
+                      (time_period_id, opening_balance, current_inventory, 
+                       closing_balance, status) 
+                      VALUES (?, ?, ?, ?, 'active')";
+        $insert_stmt = $db->prepare($insert_sql);
+        $insert_stmt->bind_param("iddd", 
+            $time_period_id, 
+            $opening_balance, 
+            $current_inventory, 
+            $closing_balance
+        );
+        
+        if ($insert_stmt->execute()) {
+            return [
+                'id' => $insert_stmt->insert_id,
+                'time_period_id' => $time_period_id,
+                'opening_balance' => $opening_balance,
+                'current_inventory' => $current_inventory,
+                'closing_balance' => $closing_balance,
+                'status' => 'active',
+                'period_name' => $current_time_period['period_name'],
+                'year' => $current_time_period['year'],
+                'month' => $current_time_period['month']
+            ];
+        }
+    } else {
+        // If period exists, calculate current inventory and update it
+        $current_inventory = calculatePeriodInventoryValue($db, $time_period_id);
+        $closing_balance = $period['opening_balance'] + $current_inventory;
+        
+        // Update the period
+        $update_sql = "UPDATE inventory_periods 
+                      SET current_inventory = ?, 
+                          closing_balance = ?,
+                          updated_at = NOW()
+                      WHERE time_period_id = ?";
+        $update_stmt = $db->prepare($update_sql);
+        $update_stmt->bind_param("ddi", $current_inventory, $closing_balance, $time_period_id);
+        $update_stmt->execute();
+        
+        // Get updated period
+        $sql = "SELECT ip.*, tp.period_name, tp.year, tp.month 
+                FROM inventory_periods ip
+                JOIN time_periods tp ON ip.time_period_id = tp.id
+                WHERE ip.time_period_id = ?";
+        $stmt = $db->prepare($sql);
+        $stmt->bind_param("i", $time_period_id);
+        $stmt->execute();
+        return $stmt->get_result()->fetch_assoc();
+    }
+    
+    return $period;
+}
+
+// Update inventory period
+function updateInventoryPeriod($db, $inventory_period_id) {
+    $sql = "SELECT * FROM inventory_periods WHERE id = ?";
+    $stmt = $db->prepare($sql);
+    $stmt->bind_param("i", $inventory_period_id);
+    $stmt->execute();
+    $period = $stmt->get_result()->fetch_assoc();
+    
+    if ($period) {
+        $current_inventory = calculatePeriodInventoryValue($db, $period['time_period_id']);
+        $closing_balance = $period['opening_balance'] + $current_inventory;
+        
+        $update_sql = "UPDATE inventory_periods 
+                       SET current_inventory = ?, 
+                           closing_balance = ?,
+                           updated_at = NOW()
+                       WHERE id = ?";
+        $update_stmt = $db->prepare($update_sql);
+        $update_stmt->bind_param("ddi", $current_inventory, $closing_balance, $inventory_period_id);
+        $update_stmt->execute();
+    }
+}
+
+// Get period sales data
+function calculatePeriodSalesData($db, $time_period_id) {
+    $sql = "SELECT 
+                COALESCE(SUM(t.net_amount), 0) as total_sales,
+                COALESCE(SUM(t.net_amount - (ti.quantity * p.cost_price)), 0) as total_profit,
+                COALESCE(SUM(ti.quantity), 0) as total_sold_quantity
+            FROM transactions t
+            JOIN transaction_items ti ON t.id = ti.transaction_id
+            JOIN products p ON ti.product_id = p.id
+            WHERE t.time_period_id = ?";
+    
+    $stmt = $db->prepare($sql);
+    if ($stmt) {
+        $stmt->bind_param("i", $time_period_id);
         $stmt->execute();
         return $stmt->get_result()->fetch_assoc();
     }
     return ['total_sales' => 0, 'total_profit' => 0, 'total_sold_quantity' => 0];
 }
 
+// Update all inventory periods (call this when products change)
+function updateAllInventoryPeriods($db) {
+    // Get all time periods in chronological order
+    $sql = "SELECT id, year, month FROM time_periods ORDER BY year, month";
+    $stmt = $db->prepare($sql);
+    $stmt->execute();
+    $time_periods = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    
+    $previous_closing_balance = 0;
+    
+    foreach ($time_periods as $time_period) {
+        $time_period_id = $time_period['id'];
+        
+        // Calculate current inventory value
+        $current_inventory = calculatePeriodInventoryValue($db, $time_period_id);
+        
+        // Check if inventory period exists
+        $check_sql = "SELECT id FROM inventory_periods WHERE time_period_id = ?";
+        $check_stmt = $db->prepare($check_sql);
+        $check_stmt->bind_param("i", $time_period_id);
+        $check_stmt->execute();
+        $exists = $check_stmt->get_result()->fetch_assoc();
+        
+        if ($exists) {
+            // Update existing period
+            $update_sql = "UPDATE inventory_periods 
+                          SET opening_balance = ?, 
+                              current_inventory = ?,
+                              closing_balance = ?,
+                              updated_at = NOW()
+                          WHERE time_period_id = ?";
+            $update_stmt = $db->prepare($update_sql);
+            $closing_balance = $previous_closing_balance + $current_inventory;
+            $update_stmt->bind_param("dddi", 
+                $previous_closing_balance, 
+                $current_inventory, 
+                $closing_balance, 
+                $time_period_id
+            );
+            $update_stmt->execute();
+        } else {
+            // Create new period
+            $insert_sql = "INSERT INTO inventory_periods 
+                          (time_period_id, opening_balance, current_inventory, 
+                           closing_balance, status) 
+                          VALUES (?, ?, ?, ?, 'active')";
+            $insert_stmt = $db->prepare($insert_sql);
+            $closing_balance = $previous_closing_balance + $current_inventory;
+            $insert_stmt->bind_param("iddd", 
+                $time_period_id, 
+                $previous_closing_balance, 
+                $current_inventory, 
+                $closing_balance
+            );
+            $insert_stmt->execute();
+        }
+        
+        // Update previous closing balance for next iteration
+        $previous_closing_balance = $closing_balance;
+    }
+}
+
+// Sync inventory after product changes
+function syncInventoryAfterProductChange($db, $time_period_id) {
+    // Update current period
+    if ($time_period_id) {
+        // First, update the current period
+        $period = getOrCreateInventoryPeriod($db, $time_period_id);
+        
+        // Get all time periods in chronological order starting from current period
+        $sql = "SELECT id FROM time_periods 
+                WHERE (year > (SELECT year FROM time_periods WHERE id = ?)) 
+                   OR (year = (SELECT year FROM time_periods WHERE id = ?) 
+                       AND month > (SELECT month FROM time_periods WHERE id = ?))
+                ORDER BY year, month";
+        $stmt = $db->prepare($sql);
+        $stmt->bind_param("iii", $time_period_id, $time_period_id, $time_period_id);
+        $stmt->execute();
+        $subsequent_periods = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        
+        // Get opening balance for current period
+        $opening_sql = "SELECT opening_balance FROM inventory_periods WHERE time_period_id = ?";
+        $opening_stmt = $db->prepare($opening_sql);
+        $opening_stmt->bind_param("i", $time_period_id);
+        $opening_stmt->execute();
+        $opening_result = $opening_stmt->get_result()->fetch_assoc();
+        $current_opening_balance = $opening_result['opening_balance'] ?? 0;
+        
+        // Recalculate current period
+        $current_inventory = calculatePeriodInventoryValue($db, $time_period_id);
+        $current_closing = $current_opening_balance + $current_inventory;
+        
+        $update_current_sql = "UPDATE inventory_periods 
+                              SET current_inventory = ?, 
+                                  closing_balance = ?,
+                                  updated_at = NOW()
+                              WHERE time_period_id = ?";
+        $update_current_stmt = $db->prepare($update_current_sql);
+        $update_current_stmt->bind_param("ddi", $current_inventory, $current_closing, $time_period_id);
+        $update_current_stmt->execute();
+        
+        $next_opening_balance = $current_closing;
+        
+        // Update all subsequent periods
+        foreach ($subsequent_periods as $subsequent_period) {
+            $sub_time_period_id = $subsequent_period['id'];
+            $sub_inventory = calculatePeriodInventoryValue($db, $sub_time_period_id);
+            $sub_closing = $next_opening_balance + $sub_inventory;
+            
+            $update_sub_sql = "UPDATE inventory_periods 
+                              SET opening_balance = ?,
+                                  current_inventory = ?, 
+                                  closing_balance = ?,
+                                  updated_at = NOW()
+                              WHERE time_period_id = ?";
+            $update_sub_stmt = $db->prepare($update_sub_sql);
+            $update_sub_stmt->bind_param("dddi", 
+                $next_opening_balance, 
+                $sub_inventory, 
+                $sub_closing, 
+                $sub_time_period_id
+            );
+            $update_sub_stmt->execute();
+            
+            $next_opening_balance = $sub_closing;
+        }
+    }
+}
+
 /* -------------------------------------------------------
-   MAIN LOGIC - PERIOD SELECTION
+   HANDLE AJAX SYNC REQUESTS
 -------------------------------------------------------- */
+
+// Check if this is an AJAX request
+if (isset($_GET['action']) && $_GET['action'] !== '') {
+    header('Content-Type: application/json');
+    
+    $action = $_GET['action'] ?? '';
+    
+    switch ($action) {
+        case 'sync_all':
+            try {
+                updateAllInventoryPeriods($db);
+                echo json_encode(['success' => true, 'message' => 'All inventory periods synced successfully']);
+            } catch (Exception $e) {
+                echo json_encode(['success' => false, 'message' => 'Error: ' . $e->getMessage()]);
+            }
+            exit();
+            
+        case 'sync_period':
+            $time_period_id = $_GET['time_period_id'] ?? null;
+            if (!$time_period_id) {
+                echo json_encode(['success' => false, 'message' => 'No time period ID provided']);
+                exit();
+            }
+            
+            try {
+                syncInventoryAfterProductChange($db, $time_period_id);
+                echo json_encode(['success' => true, 'message' => 'Period inventory synced successfully']);
+            } catch (Exception $e) {
+                echo json_encode(['success' => false, 'message' => 'Error: ' . $e->getMessage()]);
+            }
+            exit();
+            
+        case 'recalculate':
+            $period_id = $_GET['period_id'] ?? null;
+            if (!$period_id) {
+                echo json_encode(['success' => false, 'message' => 'No period ID provided']);
+                exit();
+            }
+            
+            try {
+                // Get the period details
+                $period = getInventoryPeriodById($db, $period_id);
+                if (!$period) {
+                    echo json_encode(['success' => false, 'message' => 'Period not found']);
+                    exit();
+                }
+                
+                // Recalculate this period
+                updateInventoryPeriod($db, $period_id);
+                
+                // Also update subsequent periods
+                syncInventoryAfterProductChange($db, $period['time_period_id']);
+                
+                echo json_encode(['success' => true, 'message' => 'Period recalculated successfully']);
+            } catch (Exception $e) {
+                echo json_encode(['success' => false, 'message' => 'Error: ' . $e->getMessage()]);
+            }
+            exit();
+            
+        default:
+            echo json_encode(['success' => false, 'message' => 'Invalid action']);
+            exit();
+    }
+}
+
+/* -------------------------------------------------------
+   MAIN LOGIC FOR PAGE DISPLAY
+-------------------------------------------------------- */
+
+// Update all inventory periods to ensure they're in sync
+updateAllInventoryPeriods($db);
 
 // Handle period selection
 $selected_period_id = $_GET['period_id'] ?? null;
 
-// Get all periods for the dropdown
-$all_periods = getAllInventoryPeriods($db, $user_id, $user_role);
+// Get all periods
+$all_periods = getAllInventoryPeriods($db);
 
 // Get current or selected period
 if ($selected_period_id) {
-    $selected_period = getInventoryPeriodById($db, $selected_period_id, $user_id, $user_role);
+    $selected_period = getInventoryPeriodById($db, $selected_period_id);
 } else {
-    $selected_period = getOrCreateInventoryPeriod($db, $user_id);
-    $selected_period_id = $selected_period['id'] ?? null;
+    $selected_period = getCurrentInventoryPeriod($db);
 }
 
-// Get adjacent periods for navigation
-$previous_period = $selected_period ? getPreviousInventoryPeriod($db, $user_id, $selected_period['period_month']) : null;
-$next_period = $selected_period ? getNextInventoryPeriod($db, $user_id, $selected_period['period_month']) : null;
-
-// Get carried forward products
-$carried_products = [];
-$total_carried_value = 0;
-if ($selected_period_id) {
-    $carried_products = getCarriedForwardProducts($db, $selected_period_id);
-    foreach ($carried_products as $carried) {
-        $total_carried_value += $carried['carried_value'] ?? 0;
-    }
-}
-
-// Calculate sales data for the period
-$sales_data = ['total_sales' => 0, 'total_profit' => 0, 'total_sold_quantity' => 0];
-if ($selected_period) {
-    $sales_data = calculatePeriodSalesData($db, $user_id, $selected_period['period_month']);
+// If no period found, create for current time period
+if (!$selected_period) {
+    // Get current time period
+    $current_month = date('Y-m');
+    $time_period_sql = "SELECT * FROM time_periods 
+                       WHERE CONCAT(year, '-', LPAD(month, 2, '0')) = ?
+                       LIMIT 1";
+    $time_stmt = $db->prepare($time_period_sql);
+    $time_stmt->bind_param("s", $current_month);
+    $time_stmt->execute();
+    $time_period = $time_stmt->get_result()->fetch_assoc();
     
-    // Update period with sales data
-    $update_sql = "UPDATE inventory_periods 
-                   SET total_sales = ?, total_profit = ?, updated_at = NOW()
-                   WHERE id = ?";
-    $stmt = $db->prepare($update_sql);
-    if ($stmt) {
-        $stmt->bind_param("ddi", $sales_data['total_sales'], $sales_data['total_profit'], $selected_period_id);
-        $stmt->execute();
+    if ($time_period) {
+        $selected_period = getOrCreateInventoryPeriod($db, $time_period['id']);
     }
 }
 
-// Get current products for the user
-$products_sql = "SELECT p.*, c.name as category_name,
-                (p.stock_quantity * p.cost_price) as stock_value,
-                (p.stock_quantity * p.selling_price) as potential_revenue
-                FROM products p 
-                LEFT JOIN categories c ON p.category_id = c.id 
-                WHERE p.created_by = ?
-                ORDER BY p.name ASC";
-$stmt_products = $db->prepare($products_sql);
-if ($stmt_products) {
-    $stmt_products->bind_param("i", $user_id);
+// Get products for selected period
+$products = [];
+if ($selected_period && isset($selected_period['time_period_id'])) {
+    $products_sql = "SELECT p.*, c.name as category_name,
+                    (p.stock_quantity * p.cost_price) as stock_value,
+                    (p.stock_quantity * p.selling_price) as potential_revenue
+                    FROM products p 
+                    LEFT JOIN categories c ON p.category_id = c.id 
+                    WHERE p.period_id = ?
+                    ORDER BY p.name ASC";
+    
+    $stmt_products = $db->prepare($products_sql);
+    $stmt_products->bind_param("i", $selected_period['time_period_id']);
     $stmt_products->execute();
     $products = $stmt_products->get_result()->fetch_all(MYSQLI_ASSOC);
-} else {
-    $products = [];
+}
+
+// Calculate sales data
+$sales_data = ['total_sales' => 0, 'total_profit' => 0, 'total_sold_quantity' => 0];
+if ($selected_period && isset($selected_period['time_period_id'])) {
+    $sales_data = calculatePeriodSalesData($db, $selected_period['time_period_id']);
+    
+    // Update period with sales data
+    if ($selected_period['id']) {
+        $update_sql = "UPDATE inventory_periods 
+                       SET total_sales = ?, total_profit = ?, updated_at = NOW()
+                       WHERE id = ?";
+        $stmt = $db->prepare($update_sql);
+        if ($stmt) {
+            $stmt->bind_param("ddi", $sales_data['total_sales'], $sales_data['total_profit'], $selected_period['id']);
+            $stmt->execute();
+        }
+    }
 }
 
 // Calculate inventory statistics
@@ -436,19 +568,36 @@ if ($selected_period) {
     $balance_change = ($selected_period['closing_balance'] ?? 0) - ($selected_period['opening_balance'] ?? 0);
     $balance_change_percent = ($selected_period['opening_balance'] ?? 0) > 0 ? 
                             ($balance_change / $selected_period['opening_balance']) * 100 : 0;
-    $current_inventory_value = $selected_period['current_inventory'] ?? calculateCurrentInventoryValue($db, $user_id, $selected_period['period_month'] ?? null);
+    $current_inventory_value = calculatePeriodInventoryValue($db, $selected_period['time_period_id']);
 } else {
     $balance_change = 0;
     $balance_change_percent = 0;
-    $current_inventory_value = calculateCurrentInventoryValue($db, $user_id);
+    $current_inventory_value = 0;
 }
 
-// Stock status classification helper
+// Stock status helper
 function getStockStatus($current, $min) {
     if ($current <= 0) return 'out';
     if ($current <= $min) return 'low';
     if ($current <= ($min * 2)) return 'medium';
     return 'high';
+}
+
+// Safe display functions to prevent warnings
+function safeDisplay($data, $key, $default = '') {
+    return isset($data[$key]) ? htmlspecialchars($data[$key]) : $default;
+}
+
+function safeDisplayDate($year, $month) {
+    if ($year && $month) {
+        try {
+            $date = DateTime::createFromFormat('Y-m', $year . '-' . str_pad($month, 2, '0', STR_PAD_LEFT));
+            return $date ? $date->format('F Y') : 'Invalid Date';
+        } catch (Exception $e) {
+            return 'Invalid Date';
+        }
+    }
+    return 'N/A';
 }
 ?>
 
@@ -468,25 +617,6 @@ function getStockStatus($current, $min) {
             border-radius: 15px;
             padding: 1.5rem;
             margin-bottom: 2rem;
-        }
-        .balance-flow {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border-radius: 10px;
-            padding: 1rem;
-            margin: 1rem 0;
-        }
-        .balance-step {
-            text-align: center;
-            padding: 0.5rem;
-        }
-        .balance-arrow {
-            font-size: 1.5rem;
-            color: white;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 100%;
         }
         .kpi-card {
             border: none;
@@ -509,41 +639,19 @@ function getStockStatus($current, $min) {
             letter-spacing: 1px;
             opacity: 0.8;
         }
-        .balance-section {
-            background: #f8f9fa;
+        .balance-flow {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
             border-radius: 10px;
-            padding: 1.5rem;
-            margin-bottom: 1.5rem;
+            padding: 1rem;
+            margin: 1rem 0;
         }
-        .carry-forward-card {
-            border-left: 4px solid #17a2b8;
-        }
-        .balance-change-positive {
-            color: #28a745;
-            font-weight: bold;
-        }
-        .balance-change-negative {
-            color: #dc3545;
-            font-weight: bold;
-        }
-        .period-navigation {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1rem;
+        .balance-step {
+            text-align: center;
+            padding: 0.5rem;
         }
         .period-selector {
             min-width: 250px;
-        }
-        .period-nav-btn {
-            padding: 8px 16px;
-            border-radius: 8px;
-            text-decoration: none;
-            transition: all 0.3s ease;
-        }
-        .period-nav-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
         }
         .product-icon {
             width: 40px;
@@ -556,16 +664,26 @@ function getStockStatus($current, $min) {
         .stock-status-medium { color: #ffc107; }
         .stock-status-low { color: #fd7e14; }
         .stock-status-out { color: #dc3545; }
-        .progress {
-            height: 6px;
-        }
-        .badge-user {
-            background: #17a2b8;
+        .sync-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
+            border: none;
         }
-        .badge-super-admin {
-            background: #ffc107;
-            color: #000;
+        .sync-btn:hover {
+            color: white;
+            opacity: 0.9;
+        }
+        #loadingOverlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
         }
     </style>
 </head>
@@ -582,56 +700,26 @@ function getStockStatus($current, $min) {
                     <div class="row align-items-center">
                         <div class="col-md-6">
                             <h2 class="mb-1">Inventory Period Management</h2>
-                            <p class="mb-0">Track opening and closing balances across monthly periods</p>
-                            <?php if ($user_role === 'super_admin'): ?>
-                                <span class="badge badge-super-admin mt-1">Super Admin View</span>
-                            <?php endif; ?>
+                            <p class="mb-0">Global inventory tracking across monthly periods</p>
                         </div>
                         <div class="col-md-6">
                             <div class="period-navigation">
-                                <!-- Previous Period Button -->
-                                <?php if ($previous_period): ?>
-                                    <a href="?period_id=<?= $previous_period['id'] ?>" class="btn btn-outline-light period-nav-btn">
-                                        <i class="fas fa-chevron-left me-2"></i>
-                                        <?= date('F Y', strtotime($previous_period['period_month'] . '-01')) ?>
-                                    </a>
-                                <?php else: ?>
-                                    <span class="btn btn-outline-light disabled period-nav-btn">
-                                        <i class="fas fa-chevron-left me-2"></i>
-                                        No Previous Period
-                                    </span>
-                                <?php endif; ?>
-
                                 <!-- Period Selector -->
                                 <div class="period-selector">
                                     <select class="form-select" id="periodSelect" onchange="changePeriod(this.value)">
                                         <option value="">Select Period</option>
                                         <?php foreach($all_periods as $period): 
-                                            $is_current = $period['period_month'] == date('Y-m');
-                                            $user_label = ($user_role === 'super_admin' && isset($period['user_name'])) ? ' - ' . $period['user_name'] : '';
+                                            $is_current = ($period['period_month_display'] ?? '') == date('Y-m');
+                                            $selected = ($selected_period && ($selected_period['id'] ?? '') == $period['id']);
                                         ?>
-                                            <option value="<?= $period['id'] ?>" 
-                                                <?= $selected_period_id == $period['id'] ? 'selected' : '' ?>>
-                                                <?= date('F Y', strtotime($period['period_month'] . '-01')) ?>
-                                                <?= $user_label ?>
+                                            <option value="<?= $period['id'] ?>" <?= $selected ? 'selected' : '' ?>>
+                                                <?= htmlspecialchars($period['period_name'] ?? '') ?>
                                                 <?= $is_current ? ' (Current)' : '' ?>
+                                                <?= ($period['is_locked'] ?? 0) ? ' (Locked)' : '' ?>
                                             </option>
                                         <?php endforeach; ?>
                                     </select>
                                 </div>
-
-                                <!-- Next Period Button -->
-                                <?php if ($next_period): ?>
-                                    <a href="?period_id=<?= $next_period['id'] ?>" class="btn btn-outline-light period-nav-btn">
-                                        <?= date('F Y', strtotime($next_period['period_month'] . '-01')) ?>
-                                        <i class="fas fa-chevron-right ms-2"></i>
-                                    </a>
-                                <?php else: ?>
-                                    <span class="btn btn-outline-light disabled period-nav-btn">
-                                        No Next Period
-                                        <i class="fas fa-chevron-right ms-2"></i>
-                                    </span>
-                                <?php endif; ?>
                             </div>
                         </div>
                     </div>
@@ -639,30 +727,33 @@ function getStockStatus($current, $min) {
                     <!-- Selected Period Details -->
                     <?php if ($selected_period): ?>
                     <div class="row mt-3">
-                        <div class="col-md-4">
+                        <div class="col-md-3">
                             <strong>Selected Period:</strong>
-                            <h4 class="mb-0 mt-1"><?= date('F Y', strtotime($selected_period['period_month'] . '-01')) ?></h4>
-                            <?php if ($user_role === 'super_admin' && isset($selected_period['user_name'])): ?>
-                                <small class="text-white-50">User: <?= $selected_period['user_name'] ?></small>
-                            <?php endif; ?>
+                            <h4 class="mb-0 mt-1"><?= safeDisplay($selected_period, 'period_name', 'N/A') ?></h4>
+                            <small class="text-white-50">
+                                <?= safeDisplayDate($selected_period['year'] ?? null, $selected_period['month'] ?? null) ?>
+                            </small>
                         </div>
-                        <div class="col-md-4">
+                        <div class="col-md-3">
                             <strong>Period Status:</strong>
                             <div class="mt-1">
-                                <?php if ($selected_period['period_month'] == date('Y-m')): ?>
+                                <?php if (($selected_period['period_month_display'] ?? '') == date('Y-m')): ?>
                                     <span class="badge bg-success">Current Period</span>
-                                <?php elseif ($selected_period['period_month'] < date('Y-m')): ?>
+                                <?php elseif (($selected_period['period_month_display'] ?? '') < date('Y-m')): ?>
                                     <span class="badge bg-info">Past Period</span>
                                 <?php else: ?>
                                     <span class="badge bg-warning">Future Period</span>
                                 <?php endif; ?>
-                                <?php if (($selected_period['status'] ?? '') == 'closed'): ?>
-                                    <span class="badge bg-danger ms-1">Closed</span>
+                                <?php if (($selected_period['is_locked'] ?? 0)): ?>
+                                    <span class="badge bg-danger ms-1">Locked</span>
                                 <?php endif; ?>
                             </div>
                         </div>
-                        <div class="col-md-4 text-end">
+                        <div class="col-md-6 text-end">
                             <div class="btn-group">
+                                <button class="btn btn-light" onclick="syncInventory()" title="Sync inventory calculations">
+                                    <i class="fas fa-sync-alt me-2"></i>Sync Inventory
+                                </button>
                                 <button class="btn btn-light" onclick="exportToExcel()">
                                     <i class="fas fa-file-excel me-2"></i>Export Report
                                 </button>
@@ -693,7 +784,7 @@ function getStockStatus($current, $min) {
                                     </small>
                                 </div>
                                 <div class="col-md-1">
-                                    <div class="balance-arrow">
+                                    <div class="balance-arrow text-center">
                                         <i class="fas fa-plus"></i>
                                     </div>
                                 </div>
@@ -703,7 +794,7 @@ function getStockStatus($current, $min) {
                                     <small>Inventory added this period</small>
                                 </div>
                                 <div class="col-md-1">
-                                    <div class="balance-arrow">
+                                    <div class="balance-arrow text-center">
                                         <i class="fas fa-equals"></i>
                                     </div>
                                 </div>
@@ -712,113 +803,11 @@ function getStockStatus($current, $min) {
                                     <div class="fs-4 fw-bold">KSH <?= number_format($selected_period['closing_balance'] ?? 0, 2) ?></div>
                                     <small>Will carry to next period</small>
                                 </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Detailed Balance Summary -->
-                <div class="row mb-4">
-                    <div class="col-md-3">
-                        <div class="balance-section text-center">
-                            <h5 class="mb-3"><i class="fas fa-play-circle me-2 text-success"></i>Opening Balance</h5>
-                            <div class="d-flex justify-content-center align-items-center mb-2">
-                                <span class="fs-4 fw-bold text-success">KSH <?= number_format($selected_period['opening_balance'] ?? 0, 2) ?></span>
-                            </div>
-                            <small class="text-muted">
-                                <?php if (($selected_period['opening_balance'] ?? 0) == 0): ?>
-                                    First period - starting fresh
-                                <?php else: ?>
-                                    Previous period's closing balance
-                                <?php endif; ?>
-                            </small>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="balance-section text-center">
-                            <h5 class="mb-3"><i class="fas fa-plus-circle me-2 text-info"></i>Current Inventory Value</h5>
-                            <div class="d-flex justify-content-center align-items-center mb-2">
-                                <span class="fs-4 fw-bold text-info">KSH <?= number_format($current_inventory_value, 2) ?></span>
-                            </div>
-                            <small class="text-muted">Inventory added this period</small>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="balance-section text-center">
-                            <h5 class="mb-3"><i class="fas fa-stop-circle me-2 text-primary"></i>Closing Balance</h5>
-                            <div class="d-flex justify-content-center align-items-center mb-2">
-                                <span class="fs-4 fw-bold text-primary">KSH <?= number_format($selected_period['closing_balance'] ?? 0, 2) ?></span>
-                            </div>
-                            <small class="text-muted">Opening + Current Inventory</small>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="balance-section text-center">
-                            <h5 class="mb-3">
-                                <i class="fas fa-chart-line me-2 <?= $balance_change >= 0 ? 'text-success' : 'text-danger' ?>"></i>
-                                Balance Change
-                            </h5>
-                            <div class="d-flex justify-content-center align-items-center mb-2">
-                                <span class="fs-4 fw-bold <?= $balance_change >= 0 ? 'balance-change-positive' : 'balance-change-negative' ?>">
-                                    <?= $balance_change >= 0 ? '+' : '' ?>
-                                    KSH <?= number_format($balance_change, 2) ?>
-                                </span>
-                            </div>
-                            <small class="text-muted">
-                                <?= $balance_change >= 0 ? 'Increase' : 'Decrease' ?> from opening
-                                <?php if (($selected_period['opening_balance'] ?? 0) > 0): ?>
-                                    <br>(<?= number_format(abs($balance_change_percent), 2) ?>%)
-                                <?php endif; ?>
-                            </small>
-                        </div>
-                    </div>
-                </div>
-                <?php endif; ?>
-
-                <!-- Carried Forward Products -->
-                <?php if (!empty($carried_products)): ?>
-                <div class="row mb-4">
-                    <div class="col-12">
-                        <div class="card carry-forward-card">
-                            <div class="card-header bg-info text-white">
-                                <h5 class="mb-0">
-                                    <i class="fas fa-forward me-2"></i>
-                                    Carried Forward Stock from Previous Period
-                                    <span class="badge bg-light text-dark ms-2"><?= count($carried_products) ?> products</span>
-                                </h5>
-                            </div>
-                            <div class="card-body">
-                                <div class="table-responsive">
-                                    <table class="table table-sm">
-                                        <thead>
-                                            <tr>
-                                                <th>Product</th>
-                                                <th>SKU</th>
-                                                <th>Category</th>
-                                                <th>Quantity Carried</th>
-                                                <th>Cost Price</th>
-                                                <th>Carried Value</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <?php foreach ($carried_products as $carried): ?>
-                                            <tr>
-                                                <td><?= htmlspecialchars($carried['name'] ?? '') ?></td>
-                                                <td><code><?= htmlspecialchars($carried['sku'] ?? '') ?></code></td>
-                                                <td><span class="badge bg-secondary"><?= htmlspecialchars($carried['category_name'] ?? 'Uncategorized') ?></span></td>
-                                                <td><?= $carried['quantity'] ?? 0 ?></td>
-                                                <td>KSH <?= number_format($carried['cost_price'] ?? 0, 2) ?></td>
-                                                <td class="fw-bold">KSH <?= number_format($carried['carried_value'] ?? 0, 2) ?></td>
-                                            </tr>
-                                            <?php endforeach; ?>
-                                        </tbody>
-                                        <tfoot>
-                                            <tr class="table-active">
-                                                <td colspan="5" class="text-end fw-bold">Total Carried Value:</td>
-                                                <td class="fw-bold text-primary">KSH <?= number_format($total_carried_value, 2) ?></td>
-                                            </tr>
-                                        </tfoot>
-                                    </table>
+                                <div class="col-md-1 text-center">
+                                    <button class="btn sync-btn btn-sm" onclick="recalculatePeriod('<?= $selected_period['id'] ?>')" 
+                                            title="Recalculate this period">
+                                        <i class="fas fa-calculator"></i>
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -908,15 +897,20 @@ function getStockStatus($current, $min) {
                     <div class="col-12">
                         <div class="card">
                             <div class="card-header d-flex justify-content-between align-items-center">
-                                <h5 class="mb-0">
-                                    <i class="fas fa-boxes me-2"></i>
-                                    Current Inventory
-                                    <?php if ($selected_period): ?>
-                                        - <?= date('F Y', strtotime($selected_period['period_month'] . '-01')) ?>
-                                    <?php endif; ?>
-                                    <small class="text-muted">(<?= $total_products ?> products)</small>
-                                </h5>
-                                <span class="badge bg-primary">Total Value: KSH <?= number_format($total_stock_value, 2) ?></span>
+                                <div>
+                                    <h5 class="mb-0">
+                                        <i class="fas fa-boxes me-2"></i>
+                                        Inventory for 
+                                        <?= $selected_period ? safeDisplay($selected_period, 'period_name', 'Current Period') : 'Current Period' ?>
+                                        <small class="text-muted">(<?= $total_products ?> products)</small>
+                                    </h5>
+                                </div>
+                                <div>
+                                    <span class="badge bg-primary me-2">Total Value: KSH <?= number_format($total_stock_value, 2) ?></span>
+                                    <button class="btn btn-sm btn-outline-primary" onclick="syncPeriodInventory('<?= $selected_period['time_period_id'] ?? '' ?>')">
+                                        <i class="fas fa-redo-alt me-1"></i>Refresh
+                                    </button>
+                                </div>
                             </div>
                             <div class="card-body">
                                 <?php if (!empty($products)): ?>
@@ -948,7 +942,7 @@ function getStockStatus($current, $min) {
                                                                     <i class="fas fa-box"></i>
                                                                 </div>
                                                                 <div>
-                                                                    <strong><?= htmlspecialchars($product['name'] ?? '') ?></strong>
+                                                                    <strong><?= safeDisplay($product, 'name') ?></strong>
                                                                     <?php if (!empty($product['supplier'])): ?>
                                                                         <br><small class="text-muted">Supplier: <?= htmlspecialchars($product['supplier']) ?></small>
                                                                     <?php endif; ?>
@@ -956,10 +950,10 @@ function getStockStatus($current, $min) {
                                                             </div>
                                                         </td>
                                                         <td>
-                                                            <code><?= htmlspecialchars($product['sku'] ?? '') ?></code>
+                                                            <code><?= safeDisplay($product, 'sku') ?></code>
                                                         </td>
                                                         <td>
-                                                            <span class="badge bg-info"><?= htmlspecialchars($product['category_name'] ?? 'Uncategorized') ?></span>
+                                                            <span class="badge bg-info"><?= safeDisplay($product, 'category_name', 'Uncategorized') ?></span>
                                                         </td>
                                                         <td>
                                                             <strong>KSH <?= number_format($product['cost_price'] ?? 0, 2) ?></strong>
@@ -1011,7 +1005,7 @@ function getStockStatus($current, $min) {
                                     <div class="text-center py-5">
                                         <i class="fas fa-box-open fa-4x text-muted mb-3"></i>
                                         <h4 class="text-muted">No Products in Inventory</h4>
-                                        <p class="text-muted">Add products to your inventory to see them here.</p>
+                                        <p class="text-muted">No products found for the selected period.</p>
                                         <a href="products.php" class="btn btn-primary">
                                             <i class="fas fa-plus me-2"></i>Add Products
                                         </a>
@@ -1047,12 +1041,102 @@ function getStockStatus($current, $min) {
             }
         }
 
-        // Auto-refresh for current period
-        <?php if ($selected_period && ($selected_period['period_month'] ?? '') == date('Y-m')): ?>
-        setTimeout(function() {
-            location.reload();
-        }, 30000); // Refresh every 30 seconds for current period
-        <?php endif; ?>
+        function syncInventory() {
+            if (confirm('Are you sure you want to sync all inventory periods? This will recalculate all opening and closing balances.')) {
+                showLoading('Syncing inventory...');
+                
+                fetch('inventory.php?action=sync_all')
+                    .then(response => response.json())
+                    .then(data => {
+                        hideLoading();
+                        if (data.success) {
+                            alert('Inventory synced successfully!');
+                            window.location.reload();
+                        } else {
+                            alert('Error: ' + data.message);
+                        }
+                    })
+                    .catch(error => {
+                        hideLoading();
+                        alert('Error syncing inventory: ' + error);
+                    });
+            }
+        }
+
+        function syncPeriodInventory(timePeriodId) {
+            if (!timePeriodId) return;
+            
+            showLoading('Syncing period inventory...');
+            
+            fetch(`inventory.php?action=sync_period&time_period_id=${timePeriodId}`)
+                .then(response => response.json())
+                .then(data => {
+                    hideLoading();
+                    if (data.success) {
+                        alert('Period inventory synced successfully!');
+                        window.location.reload();
+                    } else {
+                        alert('Error: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    hideLoading();
+                    alert('Error syncing period inventory: ' + error);
+                });
+        }
+
+        function recalculatePeriod(periodId) {
+            if (!periodId) return;
+            
+            if (confirm('Recalculate this period? This will update the opening and closing balances.')) {
+                showLoading('Recalculating period...');
+                
+                fetch(`inventory.php?action=recalculate&period_id=${periodId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        hideLoading();
+                        if (data.success) {
+                            alert('Period recalculated successfully!');
+                            window.location.reload();
+                        } else {
+                            alert('Error: ' + data.message);
+                        }
+                    })
+                    .catch(error => {
+                        hideLoading();
+                        alert('Error recalculating period: ' + error);
+                    });
+            }
+        }
+
+        function showLoading(message) {
+            // Remove existing overlay if any
+            hideLoading();
+            
+            // Create loading overlay
+            const overlay = document.createElement('div');
+            overlay.id = 'loadingOverlay';
+            
+            const spinner = document.createElement('div');
+            spinner.style.cssText = 'text-align: center; color: white;';
+            
+            spinner.innerHTML = `
+                <div class="spinner-border text-primary mb-3" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p>${message}</p>
+            `;
+            
+            overlay.appendChild(spinner);
+            document.body.appendChild(overlay);
+        }
+
+        function hideLoading() {
+            const overlay = document.getElementById('loadingOverlay');
+            if (overlay) {
+                overlay.remove();
+            }
+        }
     </script>
 </body>
 </html>

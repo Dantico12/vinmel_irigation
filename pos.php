@@ -52,134 +52,77 @@ $is_print_request = isset($_GET['print_receipt']) && isset($_GET['receipt_number
 /**
  * Generate receipt HTML for preview and printing
  */
-function generateReceiptHTML($receipt_number, $transaction, $items, $company_details) {
+function generateReceiptHTML($receipt_number, $transaction, $items, $company_details, $for_print = false) {
     ob_start();
     ?>
     <!DOCTYPE html>
     <html>
     <head>
         <meta charset="UTF-8">
-        <style>
-            body { 
-                font-family: 'Courier New', monospace; 
-                font-size: 12px; 
-                margin: 0; 
-                padding: 15px;
-                background: white;
-            }
-            .receipt { 
-                width: 100%; 
-                max-width: 300px; 
-                margin: 0 auto; 
-            }
-            .header { 
-                text-align: center; 
-                border-bottom: 2px dashed #000; 
-                padding-bottom: 10px; 
-                margin-bottom: 10px; 
-            }
-            .header h2 { 
-                margin: 5px 0; 
-                font-size: 16px;
-                font-weight: bold;
-            }
-            .header p { 
-                margin: 3px 0; 
-                font-size: 11px;
-            }
-            .info { 
-                margin: 10px 0; 
-            }
-            .info-row { 
-                display: flex; 
-                justify-content: space-between; 
-                margin: 3px 0; 
-                font-size: 11px;
-            }
-            .items-table { 
-                width: 100%; 
-                border-collapse: collapse; 
-                margin: 10px 0; 
-                font-size: 11px;
-            }
-            .items-table th, 
-            .items-table td { 
-                border-bottom: 1px solid #ddd; 
-                padding: 5px 3px; 
-                text-align: left; 
-            }
-            .items-table th { 
-                border-bottom: 2px solid #000; 
-                font-weight: bold;
-            }
-            .total-section { 
-                margin-top: 10px; 
-            }
-            .total-row { 
-                display: flex; 
-                justify-content: space-between; 
-                padding: 3px 0; 
-                font-size: 11px;
-            }
-            .grand-total { 
-                font-weight: bold; 
-                font-size: 13px; 
-                border-top: 2px solid #000; 
-                padding-top: 8px; 
-                margin-top: 8px; 
-            }
-            .footer { 
-                text-align: center; 
-                margin-top: 15px; 
-                padding-top: 10px; 
-                border-top: 2px dashed #000; 
-                font-size: 10px; 
-            }
-            .divider { 
-                border-bottom: 1px dashed #000; 
-                margin: 8px 0; 
-            }
-        </style>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Receipt <?= htmlspecialchars($receipt_number) ?></title>
+        <link href="style.css" rel="stylesheet">
+        <?php if ($for_print): ?>
+        <script>
+            window.onload = function() {
+                setTimeout(function() {
+                    window.print();
+                }, 500);
+                
+                window.onafterprint = function() {
+                    setTimeout(function() {
+                        window.close();
+                    }, 500);
+                };
+            };
+        </script>
+        <?php endif; ?>
     </head>
-    <body>
-        <div class="receipt">
-            <div class="header">
+    <body class="receipt-print-page">
+        <?php if (!$for_print): ?>
+        <div class="print-message">
+            <i class="fas fa-print"></i> Ready to print receipt
+        </div>
+        <?php endif; ?>
+        
+        <div class="receipt-container">
+            <div class="receipt-header">
                 <h2><?= htmlspecialchars($company_details['name']) ?></h2>
                 <p><?= htmlspecialchars($company_details['address']) ?></p>
                 <p>Tel: <?= htmlspecialchars($company_details['phone']) ?></p>
                 <p>Email: <?= htmlspecialchars($company_details['email']) ?></p>
             </div>
             
-            <div class="divider"></div>
+            <div class="receipt-divider"></div>
             
-            <div class="info">
-                <div class="info-row">
+            <div class="receipt-info">
+                <div class="receipt-info-row">
                     <span><strong>Receipt #:</strong></span>
                     <span><?= htmlspecialchars($receipt_number) ?></span>
                 </div>
-                <div class="info-row">
+                <div class="receipt-info-row">
                     <span><strong>Date:</strong></span>
                     <span><?= date('Y-m-d H:i:s', strtotime($transaction['transaction_date'])) ?></span>
                 </div>
                 <?php if (!empty($transaction['customer_name'])): ?>
-                <div class="info-row">
+                <div class="receipt-info-row">
                     <span><strong>Customer:</strong></span>
                     <span><?= htmlspecialchars($transaction['customer_name']) ?></span>
                 </div>
                 <?php endif; ?>
-                <div class="info-row">
+                <div class="receipt-info-row">
                     <span><strong>Seller:</strong></span>
                     <span><?= htmlspecialchars($transaction['seller_name']) ?></span>
                 </div>
-                <div class="info-row">
+                <div class="receipt-info-row">
                     <span><strong>Payment:</strong></span>
                     <span><?= strtoupper(htmlspecialchars($transaction['payment_method'])) ?></span>
                 </div>
             </div>
             
-            <div class="divider"></div>
+            <div class="receipt-divider"></div>
             
-            <table class="items-table">
+            <table class="receipt-items-table">
                 <thead>
                     <tr>
                         <th>Item</th>
@@ -192,36 +135,36 @@ function generateReceiptHTML($receipt_number, $transaction, $items, $company_det
                     <?php foreach ($items as $item): ?>
                     <tr>
                         <td><?= htmlspecialchars($item['product_name']) ?></td>
-                        <td style="text-align: center;"><?= $item['quantity'] ?></td>
-                        <td style="text-align: right;"><?= number_format($item['unit_price'], 2) ?></td>
-                        <td style="text-align: right;"><?= number_format($item['total_price'], 2) ?></td>
+                        <td class="text-center"><?= $item['quantity'] ?></td>
+                        <td class="text-right">KSh <?= number_format($item['unit_price'], 2) ?></td>
+                        <td class="text-right">KSh <?= number_format($item['total_price'], 2) ?></td>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>
             </table>
             
-            <div class="divider"></div>
+            <div class="receipt-divider"></div>
             
-            <div class="total-section">
-                <div class="total-row">
+            <div class="receipt-totals">
+                <div class="receipt-total-row">
                     <span>Subtotal:</span>
                     <span>KSh <?= number_format($transaction['total_amount'], 2) ?></span>
                 </div>
                 <?php if ($transaction['discount_amount'] > 0): ?>
-                <div class="total-row">
+                <div class="receipt-total-row">
                     <span>Discount:</span>
                     <span>- KSh <?= number_format($transaction['discount_amount'], 2) ?></span>
                 </div>
                 <?php endif; ?>
-                <div class="total-row grand-total">
+                <div class="receipt-grand-total">
                     <span>TOTAL:</span>
                     <span>KSh <?= number_format($transaction['net_amount'], 2) ?></span>
                 </div>
             </div>
             
-            <div class="divider"></div>
+            <div class="receipt-divider"></div>
             
-            <div class="footer">
+            <div class="receipt-footer">
                 <p><strong>Thank you for your business!</strong></p>
                 <p><?= htmlspecialchars($company_details['name']) ?></p>
                 <p>Date Printed: <?= date('Y-m-d H:i:s') ?></p>
@@ -287,9 +230,9 @@ function generateReceiptPreview($receipt_number, $transaction_data, $items, $com
                         <div class="fw-semibold"><?= htmlspecialchars($item['name']) ?></div>
                         <small class="text-muted"><?= htmlspecialchars($item['sku']) ?></small>
                     </td>
-                    <td style="text-align: center;"><?= $item['quantity'] ?></td>
-                    <td style="text-align: right;">KSh <?= number_format($item['selling_price'], 2) ?></td>
-                    <td style="text-align: right;">KSh <?= number_format($item['selling_price'] * $item['quantity'], 2) ?></td>
+                    <td class="text-center"><?= $item['quantity'] ?></td>
+                    <td class="text-right">KSh <?= number_format($item['selling_price'], 2) ?></td>
+                    <td class="text-right">KSh <?= number_format($item['selling_price'] * $item['quantity'], 2) ?></td>
                 </tr>
                 <?php endforeach; ?>
             </tbody>
@@ -325,10 +268,11 @@ function generateReceiptPreview($receipt_number, $transaction_data, $items, $com
 }
 
 /**
- * Save receipt details
+ * Save receipt details - FIXED VERSION
  */
-function saveReceipt($transaction_id, $receipt_number, $user_id, $db, $period_id = null) {
+function saveReceipt($transaction_id, $receipt_number, $user_id, $db, $period_id = null, $payment_method = 'cash') {
     try {
+        // Get transaction info
         $transaction_sql = "SELECT t.*, u.name as seller_name, c.name as customer_name, 
                                    c.phone as customer_phone, c.email as customer_email
                           FROM transactions t
@@ -342,6 +286,7 @@ function saveReceipt($transaction_id, $receipt_number, $user_id, $db, $period_id
         
         if (!$transaction) throw new Exception("Transaction not found");
         
+        // Get transaction items from database
         $items_sql = "SELECT ti.*, p.name as product_name, p.sku 
                      FROM transaction_items ti
                      JOIN products p ON ti.product_id = p.id
@@ -363,6 +308,12 @@ function saveReceipt($transaction_id, $receipt_number, $user_id, $db, $period_id
             ];
         }
         
+        // Validate payment method
+        $payment_method = strtolower(trim($payment_method));
+        if (!in_array($payment_method, ['cash', 'mpesa'])) {
+            $payment_method = 'cash';
+        }
+        
         $company_details = [
             'name' => 'Vinmel Irrigation',
             'address' => 'Nairobi, Kenya',
@@ -370,43 +321,8 @@ function saveReceipt($transaction_id, $receipt_number, $user_id, $db, $period_id
             'email' => 'info@vinmel.com'
         ];
         
-        $receipt_html = generateReceiptHTML($receipt_number, $transaction, $items, $company_details);
-        
-        $table_check = "SHOW TABLES LIKE 'receipts'";
-        $table_exists = $db->query($table_check)->num_rows > 0;
-        
-        if (!$table_exists) {
-            $create_table = "CREATE TABLE IF NOT EXISTS `receipts` (
-                `id` int(11) NOT NULL AUTO_INCREMENT,
-                `transaction_id` int(11) NOT NULL,
-                `receipt_number` varchar(50) NOT NULL,
-                `customer_name` varchar(255) DEFAULT NULL,
-                `customer_phone` varchar(20) DEFAULT NULL,
-                `customer_email` varchar(100) DEFAULT NULL,
-                `seller_id` int(11) NOT NULL,
-                `seller_name` varchar(100) NOT NULL,
-                `total_amount` decimal(10,2) NOT NULL,
-                `discount_amount` decimal(10,2) DEFAULT 0.00,
-                `net_amount` decimal(10,2) NOT NULL,
-                `payment_method` enum('cash','mpesa') DEFAULT 'cash',
-                `transaction_date` datetime NOT NULL,
-                `items_json` text NOT NULL,
-                `receipt_html` text NOT NULL,
-                `period_id` int(11) DEFAULT NULL,
-                `company_details` text DEFAULT NULL,
-                `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
-                PRIMARY KEY (`id`),
-                UNIQUE KEY `receipt_number` (`receipt_number`),
-                KEY `transaction_id` (`transaction_id`),
-                KEY `seller_id` (`seller_id`),
-                KEY `period_id` (`period_id`),
-                KEY `transaction_date` (`transaction_date`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
-            
-            if (!$db->query($create_table)) {
-                throw new Exception("Failed to create receipts table: " . $db->error);
-            }
-        }
+        // Generate receipt HTML
+        $receipt_html = generateReceiptHTML($receipt_number, $transaction, $items, $company_details, false);
         
         $insert_sql = "INSERT INTO receipts (
             transaction_id, receipt_number, customer_name, customer_phone, customer_email,
@@ -418,7 +334,7 @@ function saveReceipt($transaction_id, $receipt_number, $user_id, $db, $period_id
         $items_json = json_encode($items);
         $company_json = json_encode($company_details);
         $insert_stmt->bind_param(
-            "issssiddddssssis",
+            "issssissddssssis",
             $transaction_id,
             $receipt_number,
             $transaction['customer_name'],
@@ -429,7 +345,7 @@ function saveReceipt($transaction_id, $receipt_number, $user_id, $db, $period_id
             $transaction['total_amount'],
             $transaction['discount_amount'],
             $transaction['net_amount'],
-            $transaction['payment_method'],
+            $payment_method,
             $transaction['transaction_date'],
             $items_json,
             $receipt_html,
@@ -437,7 +353,11 @@ function saveReceipt($transaction_id, $receipt_number, $user_id, $db, $period_id
             $company_json
         );
         
-        return $insert_stmt->execute();
+        if (!$insert_stmt->execute()) {
+            throw new Exception("Failed to save receipt: " . $insert_stmt->error);
+        }
+        
+        return $insert_stmt->insert_id;
         
     } catch (Exception $e) {
         error_log("Error saving receipt: " . $e->getMessage());
@@ -451,8 +371,16 @@ function saveReceipt($transaction_id, $receipt_number, $user_id, $db, $period_id
 
 if ($is_print_request) {
     $receipt_number = $_GET['receipt_number'];
+    $auto_print = isset($_GET['auto_print']) && $_GET['auto_print'] == '1';
     
-    $sql = "SELECT receipt_html FROM receipts WHERE receipt_number = ?";
+    // First, try to get from receipts table
+    $sql = "SELECT r.receipt_html, t.*, u.name as seller_name, c.name as customer_name, 
+                   c.phone as customer_phone, c.email as customer_email
+            FROM receipts r
+            JOIN transactions t ON r.transaction_id = t.id
+            LEFT JOIN users u ON t.user_id = u.id
+            LEFT JOIN customers c ON t.customer_id = c.id
+            WHERE r.receipt_number = ?";
     $stmt = $db->prepare($sql);
     $stmt->bind_param("s", $receipt_number);
     $stmt->execute();
@@ -460,11 +388,42 @@ if ($is_print_request) {
     
     if ($result->num_rows > 0) {
         $receipt = $result->fetch_assoc();
-        echo $receipt['receipt_html'];
+        
+        // Get items from receipt JSON
+        $items = [];
+        $items_json = $receipt['items_json'] ?? '[]';
+        
+        if (!empty($items_json) && $items_json !== '[]') {
+            $items_data = json_decode($items_json, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($items_data)) {
+                foreach ($items_data as $item) {
+                    $items[] = [
+                        'product_name' => $item['product_name'] ?? 'Unknown Product',
+                        'sku' => $item['sku'] ?? '',
+                        'quantity' => $item['quantity'] ?? 0,
+                        'unit_price' => $item['unit_price'] ?? 0,
+                        'total_price' => $item['total_price'] ?? 0
+                    ];
+                }
+            }
+        }
+        
+        // Generate receipt with print styling
+        $transaction_data = [
+            'transaction_date' => $receipt['transaction_date'],
+            'customer_name' => $receipt['customer_name'],
+            'seller_name' => $receipt['seller_name'],
+            'payment_method' => $receipt['payment_method'],
+            'total_amount' => $receipt['total_amount'],
+            'discount_amount' => $receipt['discount_amount'],
+            'net_amount' => $receipt['net_amount']
+        ];
+        
+        echo generateReceiptHTML($receipt_number, $transaction_data, $items, $company_details, $auto_print);
         exit();
     } else {
-        // Fallback: generate receipt from session
-        if (isset($_SESSION['last_receipt_data'])) {
+        // If not in receipts table, check if it's the current transaction
+        if (isset($_SESSION['last_receipt_data']) && $_SESSION['last_receipt_data']['receipt_number'] == $receipt_number) {
             $data = $_SESSION['last_receipt_data'];
             
             // Create transaction data structure
@@ -478,25 +437,27 @@ if ($is_print_request) {
                 'net_amount' => $data['total'] ?? 0
             ];
             
-            // Create items array
+            // Create items array from session
             $items = [];
-            foreach ($data['items'] as $item) {
-                $items[] = [
-                    'product_name' => $item['name'],
-                    'sku' => $item['sku'],
-                    'quantity' => $item['quantity'],
-                    'unit_price' => $item['selling_price'],
-                    'total_price' => $item['selling_price'] * $item['quantity']
-                ];
+            if (isset($data['items']) && is_array($data['items'])) {
+                foreach ($data['items'] as $item) {
+                    $items[] = [
+                        'product_name' => $item['name'] ?? 'Unknown Product',
+                        'sku' => $item['sku'] ?? '',
+                        'quantity' => $item['quantity'] ?? 0,
+                        'unit_price' => $item['selling_price'] ?? 0,
+                        'total_price' => ($item['selling_price'] ?? 0) * ($item['quantity'] ?? 0)
+                    ];
+                }
             }
             
-            echo generateReceiptHTML($receipt_number, $transaction_data, $items, $company_details);
+            echo generateReceiptHTML($receipt_number, $transaction_data, $items, $company_details, $auto_print);
             exit();
         }
     }
     
     // If nothing found, show error
-    echo "<html><body><h1>Receipt not found</h1></body></html>";
+    echo "<html><body><h1>Receipt not found: $receipt_number</h1></body></html>";
     exit();
 }
 
@@ -520,12 +481,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_to_cart'])) {
     if ($quantity <= 0) {
         $error = "Quantity must be greater than 0!";
     } else {
+        // Get products from current period
         $sql = "SELECT p.*, c.name as category_name 
                 FROM products p 
                 LEFT JOIN categories c ON p.category_id = c.id 
-                WHERE p.id = ?";
+                WHERE p.id = ? AND p.period_id = ? AND p.is_active = 1";
         $stmt = $db->prepare($sql);
-        $stmt->bind_param("i", $product_id);
+        $stmt->bind_param("ii", $product_id, $current_period['id']);
         $stmt->execute();
         $result = $stmt->get_result();
         
@@ -544,13 +506,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_to_cart'])) {
                         'selling_price' => $product['selling_price'],
                         'quantity' => $quantity,
                         'category' => $product['category_name'],
-                        'description' => $product['description'] ?? ''
+                        'description' => $product['description'] ?? '',
+                        'is_carried_forward' => $product['is_carried_forward'] ?? 0
                     ];
                 }
                 $message = "{$product['name']} (x{$quantity}) added to cart!";
             }
         } else {
-            $error = "Product not found!";
+            $error = "Product not found in current period!";
         }
     }
 }
@@ -566,14 +529,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_cart'])) {
     } else {
         if (isset($_SESSION['pos_cart'][$product_id])) {
             // Check stock
-            $sql = "SELECT stock_quantity FROM products WHERE id = ?";
+            $sql = "SELECT stock_quantity FROM products WHERE id = ? AND period_id = ? AND is_active = 1";
             $stmt = $db->prepare($sql);
-            $stmt->bind_param("i", $product_id);
+            $stmt->bind_param("ii", $product_id, $current_period['id']);
             $stmt->execute();
             $result = $stmt->get_result();
             $product = $result->fetch_assoc();
             
-            if ($product['stock_quantity'] >= $quantity) {
+            if (!$product) {
+                $error = "Product not available in current period!";
+                unset($_SESSION['pos_cart'][$product_id]);
+            } elseif ($product['stock_quantity'] >= $quantity) {
                 $_SESSION['pos_cart'][$product_id]['quantity'] = $quantity;
                 $message = "Cart updated!";
             } else {
@@ -622,8 +588,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_discount'])) {
 
 // Handle payment method update
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_payment_method'])) {
-    $_SESSION['pos_payment_method'] = $_POST['payment_method'];
-    $message = "Payment method updated!";
+    $payment_method = trim($_POST['payment_method']);
+    $payment_method = strtolower($payment_method);
+    
+    if (in_array($payment_method, ['cash', 'mpesa'])) {
+        $_SESSION['pos_payment_method'] = $payment_method;
+        $message = "Payment method updated!";
+    } else {
+        if ($payment_method === 'm-pesa' || $payment_method === 'm-pesa') {
+            $_SESSION['pos_payment_method'] = 'mpesa';
+            $message = "Payment method updated to M-Pesa!";
+        } else {
+            $_SESSION['pos_payment_method'] = 'cash';
+            $error = "Invalid payment method! Defaulting to Cash.";
+        }
+    }
 }
 
 // Handle complete sale with receipt preview
@@ -631,17 +610,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['complete_sale'])) {
     if (empty($_SESSION['pos_cart'])) {
         $error = "Cart is empty! Add products to complete sale.";
     } else {
-        // Calculate totals
+        // Calculate totals from session cart
         $subtotal = 0;
         $cart_items_detail = [];
         foreach ($_SESSION['pos_cart'] as $product_id => $item) {
             $item_total = $item['selling_price'] * $item['quantity'];
             $subtotal += $item_total;
             $cart_items_detail[] = [
+                'product_id' => $product_id,
                 'name' => $item['name'],
                 'sku' => $item['sku'],
                 'selling_price' => $item['selling_price'],
-                'quantity' => $item['quantity']
+                'quantity' => $item['quantity'],
+                'total' => $item_total,
+                'is_carried_forward' => $item['is_carried_forward'] ?? 0
             ];
         }
         
@@ -649,7 +631,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['complete_sale'])) {
         $net_amount = $subtotal - $discount_amount;
         
         // Generate receipt number
-        $receipt_number = 'RCP' . date('Ymd') . str_pad(mt_rand(1, 999), 3, '0', STR_PAD_LEFT);
+        $receipt_number = 'RCP' . date('YmdHis') . str_pad(mt_rand(1, 999), 3, '0', STR_PAD_LEFT);
         
         // Store for receipt preview
         $_SESSION['last_receipt_preview'] = [
@@ -666,8 +648,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['complete_sale'])) {
         $show_receipt_preview = true;
     }
 }
-
-// Handle confirm sale after preview
+// Handle confirm sale after preview - FIXED VERSION
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirm_sale'])) {
     if (isset($_SESSION['last_receipt_preview'])) {
         $receipt_data = $_SESSION['last_receipt_preview'];
@@ -680,21 +661,71 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirm_sale'])) {
             // Get period ID if exists
             $period_id = $current_period ? $current_period['id'] : null;
             
-            // Insert transaction
+            // Validate payment method
+            $payment_method = strtolower(trim($receipt_data['payment_method']));
+            
+            if ($payment_method === 'm-pesa' || $payment_method === 'm-pesa') {
+                $payment_method = 'mpesa';
+            }
+            
+            if (!in_array($payment_method, ['cash', 'mpesa'])) {
+                $payment_method = 'cash';
+            }
+            
+            // FIXED: Get customer ID if exists
+            $customer_id = null;
+            if (isset($_SESSION['pos_customer']['name']) && !empty($_SESSION['pos_customer']['name'])) {
+                // Try to find existing customer or insert new one
+                $customer_name = $_SESSION['pos_customer']['name'];
+                $customer_phone = $_SESSION['pos_customer']['phone'] ?? null;
+                $customer_email = $_SESSION['pos_customer']['email'] ?? null;
+                
+                // Check if customer exists
+                $customer_sql = "SELECT id FROM customers WHERE name = ? AND (phone = ? OR email = ?)";
+                $customer_stmt = $db->prepare($customer_sql);
+                $customer_stmt->bind_param("sss", $customer_name, $customer_phone, $customer_email);
+                $customer_stmt->execute();
+                $customer_result = $customer_stmt->get_result();
+                
+                if ($customer_result->num_rows > 0) {
+                    $customer = $customer_result->fetch_assoc();
+                    $customer_id = $customer['id'];
+                } else if (!empty($customer_name)) {
+                    // Insert new customer
+                    $insert_customer_sql = "INSERT INTO customers (name, phone, email, created_at) VALUES (?, ?, ?, NOW())";
+                    $insert_customer_stmt = $db->prepare($insert_customer_sql);
+                    $insert_customer_stmt->bind_param("sss", $customer_name, $customer_phone, $customer_email);
+                    if ($insert_customer_stmt->execute()) {
+                        $customer_id = $db->insert_id;
+                    }
+                }
+            }
+            
+            // FIXED: bind_param parameters - using s for NULL customer_id
+            // Types: s = string, i = integer, d = double/float
+            // Parameters: receipt_number(s), user_id(i), customer_id(i/null), total_amount(d), discount_amount(d), net_amount(d), payment_method(s), period_id(i)
             $transaction_sql = "INSERT INTO transactions (
-                receipt_number, user_id, total_amount, discount_amount, net_amount, 
+                receipt_number, user_id, customer_id, total_amount, discount_amount, net_amount, 
                 payment_method, transaction_date, time_period_id
-            ) VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)";
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)";
             
             $transaction_stmt = $db->prepare($transaction_sql);
+            
+            // FIXED: Proper type definition string - 'siidddssi' was wrong
+            // We have: s (receipt_number), i (user_id), i (customer_id - but can be null), 
+            // d (total_amount), d (discount_amount), d (net_amount), s (payment_method), i (period_id)
+            // For NULL values, we need to use 'i' type but bind NULL value
+            
+            // Bind parameters properly
             $transaction_stmt->bind_param(
-                "sidddsi",
+                "siidddsi",  // 7 types for 8 parameters (customer_id uses i type even if null)
                 $receipt_number,
                 $user_id,
+                $customer_id,
                 $receipt_data['subtotal'],
                 $receipt_data['discount'],
                 $receipt_data['total'],
-                $receipt_data['payment_method'],
+                $payment_method,
                 $period_id
             );
             
@@ -706,6 +737,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirm_sale'])) {
             
             // Insert transaction items and update stock
             foreach ($_SESSION['pos_cart'] as $product_id => $item) {
+                // Check product exists in current period
+                $check_sql = "SELECT id, stock_quantity, is_carried_forward FROM products WHERE id = ? AND period_id = ? AND is_active = 1";
+                $check_stmt = $db->prepare($check_sql);
+                $check_stmt->bind_param("ii", $product_id, $period_id);
+                $check_stmt->execute();
+                $check_result = $check_stmt->get_result();
+                $product_check = $check_result->fetch_assoc();
+                
+                if (!$product_check) {
+                    throw new Exception("Product ID $product_id not available in current period");
+                }
+                
+                if ($product_check['stock_quantity'] < $item['quantity']) {
+                    throw new Exception("Insufficient stock for product ID $product_id");
+                }
+                
                 // Insert transaction item
                 $item_sql = "INSERT INTO transaction_items (
                     transaction_id, product_id, quantity, unit_price, total_price
@@ -725,45 +772,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirm_sale'])) {
                 }
                 
                 // Update product stock
-                $update_stock_sql = "UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ?";
+                $update_stock_sql = "UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ? AND period_id = ? AND is_active = 1";
                 $update_stmt = $db->prepare($update_stock_sql);
-                $update_stmt->bind_param("ii", $item['quantity'], $product_id);
+                $update_stmt->bind_param("iii", $item['quantity'], $product_id, $period_id);
                 
                 if (!$update_stmt->execute()) {
                     throw new Exception("Failed to update product stock: " . $update_stmt->error);
                 }
+                
+                if ($update_stmt->affected_rows === 0) {
+                    throw new Exception("Could not update stock - product might not exist in current period");
+                }
             }
             
-            // Save receipt
-            $receipt_saved = saveReceipt($transaction_id, $receipt_number, $user_id, $db, $period_id);
+            // Save receipt to database
+            $receipt_id = saveReceipt($transaction_id, $receipt_number, $user_id, $db, $period_id, $payment_method);
             
-            if ($receipt_saved) {
-                $receipt_sql = "SELECT id FROM receipts WHERE receipt_number = ?";
-                $receipt_stmt = $db->prepare($receipt_sql);
-                $receipt_stmt->bind_param("s", $receipt_number);
-                $receipt_stmt->execute();
-                $receipt_result = $receipt_stmt->get_result();
-                $receipt_data = $receipt_result->fetch_assoc();
-                
-                $receipt_id = $receipt_data['id'] ?? 0;
+            if ($receipt_id) {
+                // Store receipt data for printing
+                $_SESSION['last_receipt_data'] = [
+                    'transaction_id' => $transaction_id,
+                    'receipt_number' => $receipt_number,
+                    'subtotal' => $receipt_data['subtotal'],
+                    'discount' => $receipt_data['discount'],
+                    'total' => $receipt_data['total'],
+                    'customer_name' => $receipt_data['customer_name'] ?? null,
+                    'payment_method' => $payment_method,
+                    'items' => $receipt_data['items'],
+                    'receipt_id' => $receipt_id
+                ];
                 
                 $message = "Sale completed successfully! Receipt: $receipt_number";
                 
-                // Store for printing
-                $_SESSION['last_receipt_data'] = array_merge($_SESSION['last_receipt_preview'], [
-                    'transaction_id' => $transaction_id
-                ]);
-                
-                // Clear receipt preview
+                // Clear preview session
                 unset($_SESSION['last_receipt_preview']);
+                
+                // Store flag to show print options after sale
+                $_SESSION['show_print_options'] = true;
+                $_SESSION['print_receipt_number'] = $receipt_number;
+                
             } else {
-                $message = "Sale completed but receipt saving failed! Transaction ID: $transaction_id";
+                throw new Exception("Failed to save receipt to database");
             }
             
             // Commit transaction
             $db->commit();
             
-            // Clear cart
+            // Clear cart only after successful transaction
             $_SESSION['pos_cart'] = [];
             $_SESSION['pos_discount'] = 0;
             $_SESSION['pos_customer'] = null;
@@ -772,10 +827,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirm_sale'])) {
             $db->rollback();
             $error = "Transaction failed: " . $e->getMessage();
             unset($_SESSION['last_receipt_preview']);
+            unset($_SESSION['last_receipt_data']);
+            unset($_SESSION['show_print_options']);
         }
     }
 }
-
 // Handle cancel sale
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cancel_sale'])) {
     unset($_SESSION['last_receipt_preview']);
@@ -790,19 +846,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['clear_cart'])) {
     $message = "Cart cleared!";
 }
 
+// Handle clear print options
+if (isset($_GET['clear_print_session'])) {
+    unset($_SESSION['show_print_options']);
+    unset($_SESSION['print_receipt_number']);
+    header('Location: pos.php');
+    exit();
+}
+
 /* -------------------------------------------------------
    FETCH PRODUCTS
 -------------------------------------------------------- */
 
-$sql = "SELECT p.*, c.name as category_name, u.name as creator_name
-        FROM products p 
-        LEFT JOIN categories c ON p.category_id = c.id 
-        LEFT JOIN users u ON p.created_by = u.id 
-        WHERE p.stock_quantity > 0 
-        ORDER BY p.name ASC";
-$stmt = $db->prepare($sql);
-$stmt->execute();
-$products = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+if ($current_period) {
+    $sql = "SELECT p.*, c.name as category_name, u.name as creator_name,
+                   CASE 
+                     WHEN p.is_carried_forward = 1 THEN 'Carried Forward'
+                     ELSE 'Newly Added'
+                   END as product_status
+            FROM products p 
+            LEFT JOIN categories c ON p.category_id = c.id 
+            LEFT JOIN users u ON p.created_by = u.id 
+            WHERE p.period_id = ? 
+            AND p.stock_quantity > 0 
+            AND p.is_active = 1
+            ORDER BY p.name ASC";
+    
+    $stmt = $db->prepare($sql);
+    $stmt->bind_param("i", $current_period['id']);
+    $stmt->execute();
+    $products = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+} else {
+    $products = [];
+    $error = "No active period found! Please set up a time period first.";
+}
 
 // Calculate cart totals
 $cart_total = 0;
@@ -826,7 +903,6 @@ $display_cart_total = $cart_total;
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <link href="style.css" rel="stylesheet">
- 
 </head>
 <body>
     <?php include 'nav_bar.php'; ?>
@@ -837,13 +913,13 @@ $display_cart_total = $cart_total;
         <div class="content-area">
             <div class="container-fluid">
                 <!-- Page Header -->
-                <div class="dashboard-header mb-4">
+                <div class="dashboard-header mb-4 pos-header">
                     <div>
                         <h1 class="h2">
                             <i class="fas fa-cash-register me-2"></i>
                             POS System
                         </h1>
-                        <p class="lead mb-0">Professional Point of Sale</p>
+                        <p class="lead mb-0">Professional Point of Sale - Current Period Inventory</p>
                     </div>
                     <div class="text-end">
                         <?php if ($current_period): ?>
@@ -874,59 +950,10 @@ $display_cart_total = $cart_total;
                     </div>
                 <?php endif; ?>
 
-                <!-- Receipt Preview Modal -->
-                <?php if (isset($show_receipt_preview) && $show_receipt_preview && isset($_SESSION['last_receipt_preview'])): 
-                    $receipt_data = $_SESSION['last_receipt_preview'];
-                ?>
-                    <div class="modal fade show" id="receiptModal" tabindex="-1" style="display: block; background: rgba(0,0,0,0.5);">
-                        <div class="modal-dialog modal-lg">
-                            <div class="modal-content">
-                                <div class="modal-header">
-                                    <h5 class="modal-title">
-                                        <i class="fas fa-receipt me-2"></i>
-                                        Receipt Preview
-                                    </h5>
-                                    <button type="button" class="btn-close" onclick="closeReceiptModal()"></button>
-                                </div>
-                                <div class="modal-body">
-                                    <div class="alert alert-info mb-3">
-                                        <i class="fas fa-info-circle me-2"></i>
-                                        Review the receipt below before completing the sale.
-                                    </div>
-                                    
-                                    <div class="receipt-preview">
-                                        <?= generateReceiptPreview(
-                                            $receipt_data['receipt_number'],
-                                            [
-                                                'customer_name' => $receipt_data['customer_name'],
-                                                'payment_method' => $receipt_data['payment_method']
-                                            ],
-                                            $receipt_data['items'],
-                                            $company_details,
-                                            $receipt_data['subtotal'],
-                                            $receipt_data['discount'],
-                                            $receipt_data['total']
-                                        ) ?>
-                                    </div>
-                                    
-                                    <div class="receipt-actions">
-                                        <form method="POST" class="d-inline">
-                                            <button type="submit" name="cancel_sale" class="btn btn-outline-secondary">
-                                                <i class="fas fa-times me-2"></i>Cancel
-                                            </button>
-                                        </form>
-                                        <button type="button" class="btn btn-success" onclick="printReceiptPreview('<?= $receipt_data['receipt_number'] ?>')">
-                                            <i class="fas fa-print me-2"></i>Print
-                                        </button>
-                                        <form method="POST" class="d-inline">
-                                            <button type="submit" name="confirm_sale" class="btn btn-primary">
-                                                <i class="fas fa-check me-2"></i>Confirm & Save
-                                            </button>
-                                        </form>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+                <?php if (!$current_period): ?>
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        No active time period found. Please <a href="time_periods.php">create or activate a time period</a> first.
                     </div>
                 <?php endif; ?>
 
@@ -948,6 +975,7 @@ $display_cart_total = $cart_total;
                             </div>
 
                             <!-- Category Filter -->
+                            <?php if ($products): ?>
                             <div class="category-filter">
                                 <button class="category-btn active" data-category="all">All Products</button>
                                 <?php
@@ -965,6 +993,7 @@ $display_cart_total = $cart_total;
                                     </button>
                                 <?php endforeach; ?>
                             </div>
+                            <?php endif; ?>
                         </div>
 
                         <!-- Products Grid -->
@@ -972,8 +1001,15 @@ $display_cart_total = $cart_total;
                             <?php if (empty($products)): ?>
                                 <div class="empty-products">
                                     <i class="fas fa-box-open"></i>
-                                    <p>No products available</p>
-                                    <p class="small">Add products to your inventory first</p>
+                                    <p>No products available in current period</p>
+                                    <?php if ($current_period): ?>
+                                        <p class="small">Add products to <?= htmlspecialchars($current_period['period_name']) ?> period first</p>
+                                        <a href="products.php" class="btn btn-primary mt-2">
+                                            <i class="fas fa-plus me-2"></i>Add Products
+                                        </a>
+                                    <?php else: ?>
+                                        <p class="small">Please create or activate a time period first</p>
+                                    <?php endif; ?>
                                 </div>
                             <?php else: ?>
                                 <?php foreach ($products as $product): 
@@ -981,19 +1017,32 @@ $display_cart_total = $cart_total;
                                                    ($product['stock_quantity'] <= $product['min_stock'] ? 'low' : 'ok');
                                     $stock_color = $stock_status == 'ok' ? 'high' : 
                                                   ($stock_status == 'low' ? 'low' : 'medium');
+                                    $is_carried = $product['is_carried_forward'] == 1;
                                 ?>
-                                    <div class="product-card" 
+                                    <div class="product-card <?= $is_carried ? 'carried-product' : '' ?>" 
                                          data-product-id="<?= $product['id'] ?>" 
                                          data-category="<?= htmlspecialchars($product['category_name'] ?? 'Uncategorized') ?>"
                                          data-name="<?= htmlspecialchars(strtolower($product['name'])) ?>"
-                                         data-sku="<?= htmlspecialchars(strtolower($product['sku'])) ?>">
+                                         data-sku="<?= htmlspecialchars(strtolower($product['sku'])) ?>"
+                                         data-status="<?= $is_carried ? 'carried' : 'new' ?>">
                                         
                                         <div class="product-card-header">
                                             <div class="product-icon">
                                                 <i class="fas fa-box"></i>
                                             </div>
                                             <div>
-                                                <div class="product-name"><?= htmlspecialchars($product['name']) ?></div>
+                                                <div class="product-name">
+                                                    <?= htmlspecialchars($product['name']) ?>
+                                                    <?php if ($is_carried): ?>
+                                                        <span class="badge bg-info ms-1" title="Carried from previous period">
+                                                            <i class="fas fa-exchange-alt"></i> Carried
+                                                        </span>
+                                                    <?php else: ?>
+                                                        <span class="badge bg-success ms-1" title="Newly added this period">
+                                                            <i class="fas fa-plus"></i> New
+                                                        </span>
+                                                    <?php endif; ?>
+                                                </div>
                                                 <div class="product-sku">SKU: <?= htmlspecialchars($product['sku']) ?></div>
                                             </div>
                                         </div>
@@ -1010,6 +1059,9 @@ $display_cart_total = $cart_total;
                                         <div class="stock-info">
                                             <span class="stock-indicator-dot <?= $stock_color ?>"></span>
                                             <span>Stock: <?= $product['stock_quantity'] ?></span>
+                                            <?php if ($product['stock_quantity'] <= $product['min_stock']): ?>
+                                                <small class="text-danger ms-1">(Low Stock)</small>
+                                            <?php endif; ?>
                                         </div>
                                         
                                         <div class="quantity-section">
@@ -1042,7 +1094,7 @@ $display_cart_total = $cart_total;
                                                     Total: KSH <?= number_format($product['selling_price'], 2) ?>
                                                 </div>
                                                 
-                                                <button type="submit" name="add_to_cart" class="btn btn-success btn-sm w-100">
+                                                <button type="submit" name="add_to_cart" class="add-to-cart-btn">
                                                     <i class="fas fa-cart-plus me-2"></i>Add to Cart
                                                 </button>
                                             </form>
@@ -1084,10 +1136,18 @@ $display_cart_total = $cart_total;
                             <?php else: ?>
                                 <?php foreach ($_SESSION['pos_cart'] as $product_id => $item): 
                                     $item_total = $item['selling_price'] * $item['quantity'];
+                                    $is_carried = $item['is_carried_forward'] ?? 0;
                                 ?>
-                                    <div class="cart-item">
+                                    <div class="cart-item <?= $is_carried ? 'carried-cart-item' : '' ?>">
                                         <div class="cart-item-details">
-                                            <div class="cart-item-name"><?= htmlspecialchars($item['name']) ?></div>
+                                            <div class="cart-item-name">
+                                                <?= htmlspecialchars($item['name']) ?>
+                                                <?php if ($is_carried): ?>
+                                                    <span class="badge bg-info ms-1" title="Carried from previous period">
+                                                        <i class="fas fa-exchange-alt"></i>
+                                                    </span>
+                                                <?php endif; ?>
+                                            </div>
                                             <div class="cart-item-meta">
                                                 <span class="cart-item-price">
                                                     KSH <?= number_format($item['selling_price'], 2) ?>
@@ -1192,7 +1252,7 @@ $display_cart_total = $cart_total;
                             </form>
                             <form method="POST">
                                 <button type="submit" name="complete_sale" class="btn btn-complete w-100" 
-                                        <?= empty($_SESSION['pos_cart']) || !$period_check['allowed'] ? 'disabled' : '' ?>>
+                                        <?= empty($_SESSION['pos_cart']) || !$period_check['allowed'] || !$current_period ? 'disabled' : '' ?>>
                                     <i class="fas fa-check me-2"></i>Complete Sale
                                 </button>
                             </form>
@@ -1202,6 +1262,129 @@ $display_cart_total = $cart_total;
             </div>
         </div>
     </div>
+
+    <!-- Receipt Preview Modal -->
+    <?php if (isset($show_receipt_preview) && $show_receipt_preview && isset($_SESSION['last_receipt_preview'])): 
+        $receipt_data = $_SESSION['last_receipt_preview'];
+    ?>
+        <div class="modal fade" id="receiptModal" tabindex="-1" aria-labelledby="receiptModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="receiptModalLabel">
+                            <i class="fas fa-receipt me-2"></i>
+                            Receipt Preview
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="alert alert-info mb-3">
+                            <i class="fas fa-info-circle me-2"></i>
+                            Review the receipt below before completing the sale.
+                        </div>
+                        
+                        <div class="receipt-preview">
+                            <?= generateReceiptPreview(
+                                $receipt_data['receipt_number'],
+                                [
+                                    'customer_name' => $receipt_data['customer_name'],
+                                    'payment_method' => $receipt_data['payment_method']
+                                ],
+                                $receipt_data['items'],
+                                $company_details,
+                                $receipt_data['subtotal'],
+                                $receipt_data['discount'],
+                                $receipt_data['total']
+                            ) ?>
+                        </div>
+                        
+                        <div class="receipt-actions">
+                            <form method="POST" class="d-inline">
+                                <button type="submit" name="cancel_sale" class="btn btn-outline-secondary">
+                                    <i class="fas fa-times me-2"></i>Cancel Sale
+                                </button>
+                            </form>
+                            <form method="POST" class="d-inline">
+                                <button type="submit" name="confirm_sale" class="btn btn-primary">
+                                    <i class="fas fa-check me-2"></i>Confirm & Save
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    <?php endif; ?>
+
+    <!-- Print Options Modal -->
+    <?php if (isset($_SESSION['show_print_options']) && $_SESSION['show_print_options'] && isset($_SESSION['print_receipt_number'])): 
+        $receipt_number = $_SESSION['print_receipt_number'];
+    ?>
+        <div class="modal fade" id="printOptionsModal" tabindex="-1" aria-labelledby="printOptionsModalLabel" aria-hidden="true">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="printOptionsModalLabel">
+                            <i class="fas fa-print me-2"></i>
+                            Print Receipt
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="alert alert-success mb-3">
+                            <i class="fas fa-check-circle me-2"></i>
+                            Sale completed successfully! Receipt: <strong><?= $receipt_number ?></strong>
+                        </div>
+                        
+                        <div class="printer-status printer-disconnected mb-3" id="printerStatus">
+                            <i class="fas fa-exclamation-circle me-2"></i>
+                            No printer connected
+                        </div>
+                        
+                        <h6 class="mb-3">Select Printing Method:</h6>
+                        
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <div class="print-option-card" onclick="selectPrintOption('browser')" id="browserOption">
+                                    <div class="text-center">
+                                        <div class="print-option-icon">
+                                            <i class="fas fa-print"></i>
+                                        </div>
+                                        <h6>Browser Print</h6>
+                                        <p class="small text-muted">Print using your browser's print dialog</p>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="col-md-6 mb-3">
+                                <div class="print-option-card" onclick="selectPrintOption('popup')" id="popupOption">
+                                    <div class="text-center">
+                                        <div class="print-option-icon">
+                                            <i class="fas fa-window-maximize"></i>
+                                        </div>
+                                        <h6>Popup Print</h6>
+                                        <p class="small text-muted">Open in new window for automatic printing</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="d-grid gap-2 mt-3">
+                            <button class="btn btn-primary" onclick="printSelectedOption()" id="printBtn">
+                                <i class="fas fa-print me-2"></i>Print Receipt
+                            </button>
+                            <button class="btn btn-outline-secondary" onclick="skipPrinting()">
+                                <i class="fas fa-forward me-2"></i>Skip Printing
+                            </button>
+                            <button class="btn btn-outline-info" onclick="viewReceipt('<?= $receipt_number ?>')">
+                                <i class="fas fa-eye me-2"></i>View Receipt Details
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    <?php endif; ?>
 
     <!-- Customer Modal -->
     <div class="modal fade" id="customerModal" tabindex="-1">
@@ -1243,7 +1426,44 @@ $display_cart_total = $cart_total;
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script><script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+    // Global variables for printing
+    let selectedPrintOption = 'browser';
+    let receiptNumber = '<?= isset($_SESSION['print_receipt_number']) ? $_SESSION['print_receipt_number'] : '' ?>';
+
+    // Initialize modals on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        <?php if (isset($show_receipt_preview) && $show_receipt_preview): ?>
+        // Show receipt preview modal
+        const receiptModal = new bootstrap.Modal(document.getElementById('receiptModal'));
+        receiptModal.show();
+        <?php endif; ?>
+
+        <?php if (isset($_SESSION['show_print_options']) && $_SESSION['show_print_options']): ?>
+        // Show print options modal after successful sale
+        const printModal = new bootstrap.Modal(document.getElementById('printOptionsModal'));
+        printModal.show();
+        <?php endif; ?>
+
+        // Auto-select browser print option
+        selectPrintOption('browser');
+        
+        // Initialize total prices
+        document.querySelectorAll('.add-to-cart-form').forEach(form => {
+            const input = form.querySelector('.quantity-input');
+            const card = form.closest('.product-card');
+            const priceElement = card ? card.querySelector('.product-price') : null;
+            const priceText = priceElement ? priceElement.textContent : '';
+            const unitPrice = parseFloat(priceText.replace('KSH', '').replace(',', '').trim());
+            const productId = form.querySelector('input[name="product_id"]').value;
+            
+            if (input && !isNaN(unitPrice)) {
+                updateTotalPrice(input, unitPrice, productId);
+            }
+        });
+    });
+
     // Quantity control functions
     function decreaseQuantity(button) {
         const input = button.closest('.quantity-input-wrapper').querySelector('.quantity-input');
@@ -1314,40 +1534,7 @@ $display_cart_total = $cart_total;
         return true;
     }
 
-    // Initialize total prices on page load
-    document.addEventListener('DOMContentLoaded', function() {
-        document.querySelectorAll('.add-to-cart-form').forEach(form => {
-            const input = form.querySelector('.quantity-input');
-            
-            // Find the parent product card
-            const card = form.closest('.product-card');
-            
-            // Look for price in the card
-            const priceElement = card ? card.querySelector('.product-price') : null;
-            const priceText = priceElement ? priceElement.textContent : '';
-            const unitPrice = parseFloat(priceText.replace('KSH', '').replace(',', '').trim());
-            const productId = form.querySelector('input[name="product_id"]').value;
-            
-            if (input && !isNaN(unitPrice)) {
-                updateTotalPrice(input, unitPrice, productId);
-            }
-        });
-        
-        // Ensure all buttons are visible on load
-        ensureButtonsVisible();
-    });
-
-    // Function to ensure all add-to-cart buttons are visible
-    function ensureButtonsVisible() {
-        const buttons = document.querySelectorAll('.add-to-cart-form button[type="submit"]');
-        buttons.forEach(button => {
-            button.style.display = 'flex';
-            button.style.visibility = 'visible';
-            button.style.opacity = '1';
-        });
-    }
-
-    // Product search with button visibility check
+    // Product search
     document.getElementById('productSearch').addEventListener('input', function(e) {
         const searchTerm = e.target.value.toLowerCase();
         const productCards = document.querySelectorAll('.product-card');
@@ -1362,12 +1549,9 @@ $display_cart_total = $cart_total;
                 card.style.display = 'none';
             }
         });
-        
-        // Ensure buttons remain visible after search
-        setTimeout(ensureButtonsVisible, 100);
     });
 
-    // Category filter with button visibility check
+    // Category filter
     document.querySelectorAll('.category-btn').forEach(btn => {
         btn.addEventListener('click', function() {
             document.querySelectorAll('.category-btn').forEach(b => b.classList.remove('active'));
@@ -1385,121 +1569,100 @@ $display_cart_total = $cart_total;
                     card.style.display = 'none';
                 }
             });
-            
-            // Ensure buttons remain visible after filtering
-            setTimeout(ensureButtonsVisible, 100);
         });
     });
 
-    // Receipt modal functions
-    function closeReceiptModal() {
-        const modal = document.getElementById('receiptModal');
-        if (modal) {
-            modal.style.display = 'none';
-        }
+    // Print Options Functions
+    function selectPrintOption(option) {
+        // Remove selected class from all options
+        document.querySelectorAll('.print-option-card').forEach(card => {
+            card.classList.remove('selected');
+        });
         
-        // Submit cancel form
-        const cancelBtn = document.querySelector('[name="cancel_sale"]');
-        if (cancelBtn) {
-            cancelBtn.closest('form').submit();
+        // Add selected class to chosen option
+        const optionElement = document.getElementById(option + 'Option');
+        if (optionElement) {
+            optionElement.classList.add('selected');
+            selectedPrintOption = option;
+            
+            // Update print button text
+            const printBtn = document.getElementById('printBtn');
+            if (option === 'browser') {
+                printBtn.innerHTML = '<i class="fas fa-print me-2"></i>Print with Browser';
+            } else if (option === 'popup') {
+                printBtn.innerHTML = '<i class="fas fa-window-maximize me-2"></i>Open Print Window';
+            }
         }
     }
 
-    function printReceiptPreview(receiptNumber) {
+    function skipPrinting() {
+        // Clear the session flag
+        fetch('pos.php?clear_print_session=1').then(() => {
+            // Hide the modal properly
+            const modal = bootstrap.Modal.getInstance(document.getElementById('printOptionsModal'));
+            if (modal) {
+                modal.hide();
+            }
+        });
+    }
+
+    function viewReceipt(receiptNumber) {
+        window.open('pos.php?print_receipt=1&receipt_number=' + encodeURIComponent(receiptNumber), '_blank');
+    }
+
+    // Print function
+    function printSelectedOption() {
+        if (!receiptNumber) {
+            alert('No receipt number available');
+            return;
+        }
+        
+        switch(selectedPrintOption) {
+            case 'browser':
+                printReceiptBrowser(receiptNumber);
+                break;
+            case 'popup':
+                printReceiptPopup(receiptNumber);
+                break;
+            default:
+                printReceiptBrowser(receiptNumber);
+        }
+    }
+
+    function printReceiptBrowser(receiptNumber) {
+        // Open receipt in new tab for printing
         const printWindow = window.open('pos.php?print_receipt=1&receipt_number=' + encodeURIComponent(receiptNumber), '_blank');
         if (printWindow) {
             printWindow.focus();
+            // Wait for window to load then trigger print
+            setTimeout(() => {
+                printWindow.print();
+            }, 1000);
         }
+        // Close the modal
+        skipPrinting();
     }
 
-    // Print receipt after successful sale
-    <?php if ($receipt_id > 0 && isset($_SESSION['last_receipt_data'])): ?>
-    setTimeout(() => {
-        printReceiptPreview('<?= $_SESSION['last_receipt_data']['receipt_number'] ?>');
-    }, 500);
-    <?php endif; ?>
-
-    // Keyboard shortcuts
-    document.addEventListener('keydown', function(e) {
-        // Ctrl + P to print receipt when modal is open
-        if (e.ctrlKey && e.key === 'p' && document.getElementById('receiptModal')) {
-            e.preventDefault();
-            const modal = document.getElementById('receiptModal');
-            if (modal && modal.style.display === 'block') {
-                const receiptNumber = modal.getAttribute('data-receipt-number');
-                if (receiptNumber) {
-                    printReceiptPreview(receiptNumber);
-                }
-            }
+    function printReceiptPopup(receiptNumber) {
+        // Open receipt in new tab with auto-print
+        const printWindow = window.open('pos.php?print_receipt=1&receipt_number=' + encodeURIComponent(receiptNumber) + '&auto_print=1', '_blank');
+        if (printWindow) {
+            printWindow.focus();
         }
-        
-        // Ctrl + S to save/confirm
-        if (e.ctrlKey && e.key === 's' && document.getElementById('receiptModal')) {
-            e.preventDefault();
-            const confirmBtn = document.querySelector('[name="confirm_sale"]');
-            if (confirmBtn) {
-                confirmBtn.click();
-            }
-        }
-        
-        // Ctrl + C to cancel (when modal is open)
-        if (e.ctrlKey && e.key === 'c' && document.getElementById('receiptModal')) {
-            e.preventDefault();
-            const cancelBtn = document.querySelector('[name="cancel_sale"]');
-            if (cancelBtn) {
-                cancelBtn.click();
-            }
-        }
-        
-        // Ctrl + F to focus search
-        if (e.ctrlKey && e.key === 'f') {
-            e.preventDefault();
-            const searchInput = document.getElementById('productSearch');
-            if (searchInput) {
-                searchInput.focus();
-            }
-        }
-        
-        // Ctrl + D to focus discount
-        if (e.ctrlKey && e.key === 'd') {
-            e.preventDefault();
-            const discountInput = document.querySelector('.discount-input');
-            if (discountInput) {
-                discountInput.focus();
-            }
-        }
-    });
+        // Close the modal
+        skipPrinting();
+    }
 
     // Auto-hide success messages
     <?php if ($message && !isset($show_receipt_preview)): ?>
     setTimeout(() => {
         const alert = document.querySelector('.alert-success');
         if (alert) {
-            alert.style.opacity = '0';
-            setTimeout(() => alert.remove(), 300);
+            const bsAlert = new bootstrap.Alert(alert);
+            bsAlert.close();
         }
     }, 5000);
     <?php endif; ?>
-
-    // Auto-focus quantity input when clicking product card
-    document.querySelectorAll('.product-card').forEach(card => {
-        card.addEventListener('click', function(e) {
-            // Don't trigger if clicking on interactive elements
-            if (!e.target.closest('.add-to-cart-form') && 
-                !e.target.closest('.quantity-btn') && 
-                !e.target.closest('.quantity-quick-btn') &&
-                !e.target.closest('button')) {
-                const input = this.querySelector('.quantity-input');
-                if (input) {
-                    input.focus();
-                    input.select();
-                }
-            }
-        });
-    });
-
-    // Periodically check button visibility (failsafe)
-    setInterval(ensureButtonsVisible, 2000);
-</script>
+    </script>
 </body>
 </html>

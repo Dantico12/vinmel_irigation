@@ -126,4 +126,44 @@ function isPeriodLocked($period_id, $db) {
     $result = $stmt->get_result()->fetch_assoc();
     return $result['is_locked'] ?? false;
 }
+
+/**
+ * Carry products forward to new period
+ */
+function carryProductsToNewPeriod($from_period_id, $to_period_id, $user_id, $db) {
+    // Get all products from the previous period with remaining stock
+    $sql = "SELECT id, stock_quantity, cost_price, selling_price 
+            FROM products 
+            WHERE period_id = ? AND created_by = ? AND stock_quantity > 0";
+    $stmt = $db->prepare($sql);
+    $stmt->bind_param("ii", $from_period_id, $user_id);
+    $stmt->execute();
+    $products = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    
+    $carried_count = 0;
+    
+    foreach ($products as $product) {
+        // Create a new product entry in the new period
+        $carry_sql = "INSERT INTO products 
+                     (name, sku, category_id, cost_price, selling_price, 
+                      stock_quantity, min_stock, supplier, description, 
+                      created_by, period_id, period_year, period_month, 
+                      is_carried_forward, carried_from_period_id, added_date, added_by) 
+                     SELECT name, CONCAT(sku, '-C'), category_id, cost_price, selling_price,
+                            stock_quantity, min_stock, supplier, description,
+                            created_by, ?, period_year, period_month,
+                            1, ?, CURDATE(), ?
+                     FROM products 
+                     WHERE id = ?";
+        
+        $carry_stmt = $db->prepare($carry_sql);
+        $carry_stmt->bind_param("iiii", $to_period_id, $from_period_id, $user_id, $product['id']);
+        
+        if ($carry_stmt->execute()) {
+            $carried_count++;
+        }
+    }
+    
+    return $carried_count;
+}
 ?>

@@ -22,7 +22,7 @@ if (session_status() === PHP_SESSION_NONE) {
         </a>
         
         <a href="time_periods.php" class="nav-link <?= basename($_SERVER['PHP_SELF']) == 'time_periods.php' ? 'active' : '' ?>">
-            <i class="fas fa-calendar-alt"></i>
+            <i class="fa-utility-duo fa-semibold fa-quotes"></i>
             <span>Time Periods</span>
         </a>
         
@@ -30,6 +30,11 @@ if (session_status() === PHP_SESSION_NONE) {
             <i class="fas fa-boxes"></i>
             <span>Incoming Products</span>
         </a>
+         <a href="quotation.php" class="nav-link <?= basename($_SERVER['PHP_SELF']) == 'quotation.php' ? 'active' : '' ?>">
+            <i class="fas fa-boxes"></i>
+            <span>quotation</span>
+        </a>
+        
         
         <a href="pos.php" class="nav-link <?= basename($_SERVER['PHP_SELF']) == 'pos.php' ? 'active' : '' ?>">
             <i class="fas fa-cash-register"></i>
