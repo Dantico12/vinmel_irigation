@@ -452,40 +452,7 @@ foreach ($months as $key => $value) {
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <link href="style.css" rel="stylesheet">
-    <style>
-        .carry-forward-info {
-            background-color: #e8f4fd;
-            border-left: 4px solid #2196F3;
-            padding: 10px;
-            margin: 10px 0;
-            border-radius: 4px;
-        }
-        .period-actions {
-            display: flex;
-            gap: 5px;
-            flex-wrap: wrap;
-        }
-        .security-badge {
-            font-size: 0.7rem;
-            padding: 2px 6px;
-            background: #28a745;
-            color: white;
-            border-radius: 3px;
-            margin-left: 5px;
-        }
-        .audit-log {
-            font-size: 0.8rem;
-            color: #6c757d;
-            background-color: #f8f9fa;
-            padding: 5px 10px;
-            border-radius: 4px;
-            margin-top: 5px;
-        }
-        .form-control:disabled {
-            background-color: #e9ecef;
-            cursor: not-allowed;
-        }
-    </style>
+    
 </head>
 <body>
     <?php include 'nav_bar.php'; ?>
@@ -536,11 +503,7 @@ foreach ($months as $key => $value) {
                     </div>
                 <?php endif; ?>
 
-                <!-- Security Notice -->
-                <div class="alert alert-info">
-                    <i class="fas fa-shield-alt me-2"></i>
-                    <strong>Security Features Active:</strong> CSRF Protection • Input Validation • Session Security • Audit Logging • SQL Injection Prevention
-                </div>
+             
 
                 <div class="row">
                     <!-- Create New Period Card -->

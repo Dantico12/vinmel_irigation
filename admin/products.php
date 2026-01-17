@@ -17,60 +17,12 @@ $user_role = $_SESSION['role'] ?? 'admin';
 $message = '';
 $error = '';
 
-/* -------------------------------------------------------
-   INVENTORY PERIOD MANAGEMENT FUNCTIONS
--------------------------------------------------------- */
 
-// Function to create inventory tables if not exists
-function createInventoryTables($db) {
-    // Check if tables already exist
-    $check_periods = $db->query("SHOW TABLES LIKE 'inventory_periods'");
-    if ($check_periods->num_rows == 0) {
-        $create_periods_table = "
-        CREATE TABLE inventory_periods (
-            id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            period_month VARCHAR(7) NOT NULL,
-            opening_balance DECIMAL(15,2) DEFAULT 0.00,
-            current_inventory DECIMAL(15,2) DEFAULT 0.00,
-            closing_balance DECIMAL(15,2) DEFAULT 0.00,
-            total_sales DECIMAL(15,2) DEFAULT 0.00,
-            total_profit DECIMAL(15,2) DEFAULT 0.00,
-            status ENUM('active', 'closed', 'future') DEFAULT 'active',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            UNIQUE KEY unique_period (period_month)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
-        
-        $db->query($create_periods_table);
-    }
-    
-    $check_carry = $db->query("SHOW TABLES LIKE 'period_stock_carry'");
-    if ($check_carry->num_rows == 0) {
-        $create_carry_table = "
-        CREATE TABLE period_stock_carry (
-            id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            period_id INT(11) NOT NULL,
-            product_id INT(11) NOT NULL,
-            quantity INT(11) NOT NULL,
-            cost_price DECIMAL(10,2) NOT NULL,
-            carried_value DECIMAL(15,2) NOT NULL,
-            carried_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (period_id) REFERENCES inventory_periods(id) ON DELETE CASCADE,
-            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
-            KEY idx_period_product (period_id, product_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
-        
-        $db->query($create_carry_table);
-    }
-}
-
-// Initialize tables
-createInventoryTables($db);
 
 // Get all inventory periods (GENERAL - not user specific)
 function getAllInventoryPeriods($db) {
     $sql = "SELECT * FROM inventory_periods 
-            ORDER BY period_month DESC";
+            ORDER BY time_period_id DESC";
     $stmt = $db->prepare($sql);
     $stmt->execute();
     
@@ -85,8 +37,8 @@ function getAllInventoryPeriods($db) {
 // Get previous inventory period
 function getPreviousInventoryPeriod($db, $current_period_month) {
     $sql = "SELECT * FROM inventory_periods 
-            WHERE period_month < ?
-            ORDER BY period_month DESC LIMIT 1";
+            WHERE time_period_id < ?
+            ORDER BY time_period_id DESC LIMIT 1";
     $stmt = $db->prepare($sql);
     $stmt->bind_param("s", $current_period_month);
     $stmt->execute();
@@ -96,7 +48,7 @@ function getPreviousInventoryPeriod($db, $current_period_month) {
 // Get next inventory period
 function getNextInventoryPeriod($db, $current_period_month) {
     $sql = "SELECT * FROM inventory_periods 
-            WHERE period_month > ?
+            WHERE time_period_id> ?
             ORDER BY period_month ASC LIMIT 1";
     $stmt = $db->prepare($sql);
     $stmt->bind_param("s", $current_period_month);
@@ -130,7 +82,7 @@ function getOrCreateInventoryPeriod($db) {
     $current_month = date('Y-m');
     
     // Check if current period exists
-    $sql = "SELECT * FROM inventory_periods WHERE period_month = ?";
+    $sql = "SELECT * FROM inventory_periods WHERE time_period_id = ?";
     $stmt = $db->prepare($sql);
     $stmt->bind_param("s", $current_month);
     $stmt->execute();
@@ -147,7 +99,7 @@ function getOrCreateInventoryPeriod($db) {
         
         // Insert new period
         $insert_sql = "INSERT INTO inventory_periods 
-                      (period_month, opening_balance, current_inventory, closing_balance, status) 
+                      (time_period_id, opening_balance, current_inventory, closing_balance, status) 
                       VALUES (?, ?, ?, ?, 'active')";
         $stmt = $db->prepare($insert_sql);
         $stmt->bind_param("sddd", $current_month, $opening_balance, $current_inventory, $closing_balance);
@@ -163,7 +115,7 @@ function getOrCreateInventoryPeriod($db) {
             // Get the newly created period
             return [
                 'id' => $period_id,
-                'period_month' => $current_month,
+                'time_period_id' => $current_month,
                 'opening_balance' => $opening_balance,
                 'current_inventory' => $current_inventory,
                 'closing_balance' => $closing_balance,

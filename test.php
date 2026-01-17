@@ -1,503 +1,367 @@
 <?php
+// test_templates_flow.php
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
-
-require_once 'config.php';
-require_once 'functions.php';
 session_start();
+require_once 'config.php';
 
-function isLoggedIn() {
-    return isset($_SESSION['user_id']);
-}
-
-function isSeller() {
-    return isset($_SESSION['role']) && ($_SESSION['role'] === 'seller' || $_SESSION['role'] === 'admin');
-}
-
-if (!isLoggedIn() || !isSeller()) {
-    header("Location: login.php");
-    exit();
-}
+// Simulate your actual user session
+$_SESSION['user_id'] = 4;
 
 $database = new Database();
-$db = $database->getConnection();
-$user_id = $_SESSION['user_id'];
+$conn = $database->getConnection();
 
-$message = '';
-$error = '';
-$carry_result = null;
+echo "<!DOCTYPE html><html><head><title>Template Flow Test</title><style>
+    body { font-family: Arial; margin: 20px; }
+    .section { background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px; }
+    .success { color: green; font-weight: bold; }
+    .error { color: red; font-weight: bold; }
+    .info { color: blue; }
+    pre { background: #eee; padding: 10px; border-radius: 3px; overflow: auto; }
+</style></head><body>";
 
-// Handle carry forward request
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['carry_forward'])) {
-    $source_period_id = intval($_POST['source_period_id']);
-    $target_period_id = intval($_POST['target_period_id']);
+echo "<h1>Testing templates.php Form Submission Flow</h1>";
+
+// Simulate the exact POST data your form sends
+echo "<div class='section'>";
+echo "<h2>1. Simulating Form POST Data</h2>";
+
+$post_data = [
+    'generate_from_template' => '1',
+    'template_id' => '2',
+    'quotation_number' => 'QTN-' . date('Ymd-His'),
+    'project_name' => 'Test Project From Debug',
+    'customer_name' => 'Test Customer',
+    'location' => 'Test Location',
+    'land_size' => '2.5',
+    'save_quotation' => '1'
+];
+
+echo "<pre>POST data that would be sent:\n" . print_r($post_data, true) . "</pre>";
+
+// Get active period
+$stmt = $conn->prepare("SELECT * FROM time_periods WHERE is_active = 1 LIMIT 1");
+$stmt->execute();
+$result = $stmt->get_result();
+$active_period = $result->fetch_assoc();
+$stmt->close();
+
+echo "<div class='info'>Active Period ID: " . ($active_period['id'] ?? 'N/A') . "</div>";
+echo "<div class='info'>User ID: " . $_SESSION['user_id'] . "</div>";
+echo "</div>";
+
+// Test the generateQuotationFromTemplate function
+echo "<div class='section'>";
+echo "<h2>2. Testing generateQuotationFromTemplate</h2>";
+
+// Copy the exact function from your templates.php
+function generateQuotationFromTemplate($template_id, $data, $conn) {
+    $template_stmt = $conn->prepare("SELECT * FROM irrigation_templates WHERE id = ?");
+    $template_stmt->bind_param("i", $template_id);
+    $template_stmt->execute();
+    $result = $template_stmt->get_result();
+    $template = $result->fetch_assoc();
+    $template_stmt->close();
     
-    if (empty($source_period_id) || empty($target_period_id)) {
-        $error = "Please select both source and target periods";
-    } elseif ($source_period_id === $target_period_id) {
-        $error = "Source and target periods cannot be the same";
+    if (!$template) {
+        return null;
+    }
+    
+    // Decode JSON fields
+    $template['items'] = json_decode($template['items_json'] ?? '[]', true) ?? [];
+    
+    $quotation = [
+        'quotation_number' => $data['quotation_number'] ?? 'QTN-' . date('Ymd-His'),
+        'project_name' => $data['project_name'] ?? $template['project_name'],
+        'customer_name' => $data['customer_name'] ?? $template['customer_name'],
+        'location' => $data['location'] ?? $template['location'],
+        'land_size' => floatval($data['land_size'] ?? $template['land_size']),
+        'land_unit' => $data['land_unit'] ?? $template['land_unit'],
+        'crop_type' => $data['crop_type'] ?? $template['crop_type'],
+        'crop_variety' => $data['crop_variety'] ?? $template['crop_variety'],
+        'irrigation_type' => $data['irrigation_type'] ?? $template['irrigation_type'],
+        'row_spacing' => floatval($data['row_spacing'] ?? $template['row_spacing']),
+        'plant_spacing' => floatval($data['plant_spacing'] ?? $template['plant_spacing']),
+        'water_pressure' => floatval($data['water_pressure'] ?? $template['water_pressure']),
+        'system_efficiency' => floatval($data['system_efficiency'] ?? $template['system_efficiency']),
+        'labor_percentage' => floatval($data['labor_percentage'] ?? $template['labor_percentage']),
+        'discount_percentage' => floatval($data['discount_percentage'] ?? $template['discount_percentage']),
+        'tax_rate' => floatval($data['tax_rate'] ?? $template['tax_rate']),
+        'items' => [],
+        'template_name' => $template['template_name']
+    ];
+    
+    // Scale items based on land size if needed
+    $scale_factor = 1;
+    if (isset($data['land_size']) && $template['land_size'] > 0) {
+        $scale_factor = floatval($data['land_size']) / $template['land_size'];
+    }
+    
+    // Process template items
+    foreach ($template['items'] as $item) {
+        $scaled_item = $item;
+        if ($scale_factor != 1) {
+            $scaled_item['quantity'] = ceil($item['quantity'] * $scale_factor);
+            $scaled_item['amount'] = $scaled_item['quantity'] * $item['rate'];
+        }
+        $quotation['items'][] = $scaled_item;
+    }
+    
+    // Calculate totals
+    $total_material = array_sum(array_column($quotation['items'], 'amount'));
+    $labor_cost = $total_material * ($quotation['labor_percentage'] / 100);
+    $subtotal = $total_material + $labor_cost;
+    $discount_amount = $subtotal * ($quotation['discount_percentage'] / 100);
+    $taxable_amount = $subtotal - $discount_amount;
+    $tax_amount = $taxable_amount * ($quotation['tax_rate'] / 100);
+    $grand_total = $taxable_amount + $tax_amount;
+    
+    // Add calculated costs
+    $quotation['total_material'] = $total_material;
+    $quotation['labor_cost'] = $labor_cost;
+    $quotation['discount_amount'] = $discount_amount;
+    $quotation['tax_amount'] = $tax_amount;
+    $quotation['grand_total'] = $grand_total;
+    
+    return $quotation;
+}
+
+// Call the function with our test data
+$generated_quotation = generateQuotationFromTemplate(2, $post_data, $conn);
+
+if ($generated_quotation) {
+    echo "<div class='success'>✓ Quotation generated successfully!</div>";
+    echo "<h3>Generated Quotation Data:</h3>";
+    echo "<pre>" . print_r($generated_quotation, true) . "</pre>";
+} else {
+    echo "<div class='error'>✗ Failed to generate quotation</div>";
+}
+echo "</div>";
+
+// Test saveQuotationToDatabase with the generated data
+echo "<div class='section'>";
+echo "<h2>3. Testing saveQuotationToDatabase with Generated Data</h2>";
+
+if ($generated_quotation) {
+    // Add template_id to the quotation
+    $generated_quotation['template_id'] = 2;
+    
+    // Test the save function
+    function testSaveQuotation($quotation, $user_id, $period_id, $conn) {
+        try {
+            // Insert quotation
+            $stmt = $conn->prepare("
+                INSERT INTO irrigation_quotations 
+                (quotation_number, project_name, customer_name, location, land_size, land_unit, 
+                 crop_type, irrigation_type, total_material, labor_cost, discount_amount, 
+                 tax_amount, grand_total, items_json, template_id, user_id, period_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ");
+            
+            if (!$stmt) {
+                throw new Exception("Prepare failed: " . $conn->error);
+            }
+            
+            $items_json = json_encode($quotation['items'] ?? []);
+            $template_id = isset($quotation['template_id']) ? intval($quotation['template_id']) : null;
+            
+            // Extract values
+            $quotation_number = $quotation['quotation_number'] ?? '';
+            $project_name = $quotation['project_name'] ?? '';
+            $customer_name = $quotation['customer_name'] ?? '';
+            $location = $quotation['location'] ?? '';
+            $land_size = floatval($quotation['land_size'] ?? 0);
+            $land_unit = $quotation['land_unit'] ?? 'acres';
+            $crop_type = $quotation['crop_type'] ?? '';
+            $irrigation_type = $quotation['irrigation_type'] ?? 'drip';
+            $total_material = floatval($quotation['total_material'] ?? 0);
+            $labor_cost = floatval($quotation['labor_cost'] ?? 0);
+            $discount_amount = floatval($quotation['discount_amount'] ?? 0);
+            $tax_amount = floatval($quotation['tax_amount'] ?? 0);
+            $grand_total = floatval($quotation['grand_total'] ?? 0);
+            
+            // Bind parameters
+            $stmt->bind_param(
+                "ssssdssddddddssii",
+                $quotation_number,
+                $project_name,
+                $customer_name,
+                $location,
+                $land_size,
+                $land_unit,
+                $crop_type,
+                $irrigation_type,
+                $total_material,
+                $labor_cost,
+                $discount_amount,
+                $tax_amount,
+                $grand_total,
+                $items_json,
+                $template_id,
+                $user_id,
+                $period_id
+            );
+            
+            if (!$stmt->execute()) {
+                throw new Exception("Execute failed: " . $stmt->error);
+            }
+            
+            $quotation_id = $conn->insert_id;
+            $stmt->close();
+            
+            return $quotation_id;
+        } catch (Exception $e) {
+            error_log("Error saving quotation: " . $e->getMessage());
+            return false;
+        }
+    }
+    
+    $saved_id = testSaveQuotation($generated_quotation, $_SESSION['user_id'], $active_period['id'], $conn);
+    
+    if ($saved_id) {
+        echo "<div class='success'>✓ Quotation saved successfully! ID: $saved_id</div>";
+        
+        // Verify it was saved to the CORRECT table
+        $verify_stmt = $conn->prepare("SELECT * FROM irrigation_quotations WHERE id = ?");
+        $verify_stmt->bind_param("i", $saved_id);
+        $verify_stmt->execute();
+        $verify_result = $verify_stmt->get_result();
+        $saved_quotation = $verify_result->fetch_assoc();
+        $verify_stmt->close();
+        
+        echo "<h3>Saved to irrigation_quotations table:</h3>";
+        echo "<table border='1' cellpadding='5'>";
+        foreach ($saved_quotation as $key => $value) {
+            echo "<tr><td><strong>$key</strong></td><td>";
+            if ($key === 'items_json') {
+                echo "<pre>" . print_r(json_decode($value, true), true) . "</pre>";
+            } else {
+                echo htmlspecialchars($value ?? '');
+            }
+            echo "</td></tr>";
+        }
+        echo "</table>";
     } else {
-        // Call the carry forward function
-        $result = carryForwardProducts($source_period_id, $target_period_id, $user_id, $db);
-        
-        if ($result['success']) {
-            $message = $result['message'];
-            $carry_result = $result;
-        } else {
-            $error = $result['message'];
-        }
+        echo "<div class='error'>✗ Failed to save quotation</div>";
     }
 }
+echo "</div>";
 
-// Get all periods for dropdown
-$periods_sql = "SELECT id, period_name, year, month, is_locked 
-                FROM time_periods 
-                WHERE created_by = ? 
-                ORDER BY year DESC, month DESC";
-$periods_stmt = $db->prepare($periods_sql);
-$periods_stmt->bind_param("i", $user_id);
-$periods_stmt->execute();
-$periods_result = $periods_stmt->get_result();
-$periods = $periods_result->fetch_all(MYSQLI_ASSOC);
+// Check what happens in your actual templates.php
+echo "<div class='section'>";
+echo "<h2>4. The ACTUAL Issue in Your templates.php</h2>";
 
-/**
- * Improved carry forward function with better handling
- */
-function carryForwardProducts($source_period_id, $target_period_id, $user_id, $db) {
-    // Start transaction
-    $db->begin_transaction();
+echo "<h3>Look at this code in your templates.php (around line 430-450):</h3>";
+echo "<pre style='background:#ffcccc;'>";
+echo htmlspecialchars('
+// Handle quotation generation from template
+if ($_SERVER[\'REQUEST_METHOD\'] === \'POST\' && isset($_POST[\'generate_from_template\'])) {
+    $template_id = $_POST[\'template_id\'] ?? null;
+    $quotation_data = $_POST;
     
-    try {
-        // Get source period info
-        $source_sql = "SELECT * FROM time_periods WHERE id = ? AND created_by = ?";
-        $source_stmt = $db->prepare($source_sql);
-        $source_stmt->bind_param("ii", $source_period_id, $user_id);
-        $source_stmt->execute();
-        $source_period = $source_stmt->get_result()->fetch_assoc();
-        
-        if (!$source_period) {
-            throw new Exception("Source period not found or access denied");
-        }
-        
-        // Get target period info
-        $target_sql = "SELECT * FROM time_periods WHERE id = ? AND created_by = ?";
-        $target_stmt = $db->prepare($target_sql);
-        $target_stmt->bind_param("ii", $target_period_id, $user_id);
-        $target_stmt->execute();
-        $target_period = $target_stmt->get_result()->fetch_assoc();
-        
-        if (!$target_period) {
-            throw new Exception("Target period not found or access denied");
-        }
-        
-        // Check if target period already has carried products
-        $check_carried_sql = "SELECT COUNT(*) as count FROM products 
-                             WHERE period_id = ? AND is_carried_forward = 1";
-        $check_stmt = $db->prepare($check_carried_sql);
-        $check_stmt->bind_param("i", $target_period_id);
-        $check_stmt->execute();
-        $check_result = $check_stmt->get_result()->fetch_assoc();
-        
-        if ($check_result['count'] > 0) {
-            throw new Exception("Target period already has carried-forward products. Please clear them first.");
-        }
-        
-        // Get all active products from source period
-        $products_sql = "SELECT * FROM products 
-                        WHERE created_by = ? 
-                        AND period_id = ? 
-                        AND is_active = 1 
-                        AND stock_quantity > 0
-                        ORDER BY name ASC";
-        $products_stmt = $db->prepare($products_sql);
-        $products_stmt->bind_param("ii", $user_id, $source_period_id);
-        $products_stmt->execute();
-        $products_result = $products_stmt->get_result();
-        
-        $carried_count = 0;
-        $carried_products = [];
-        $total_value = 0;
-        
-        while ($product = $products_result->fetch_assoc()) {
-            // Generate new SKU for carried product
-            $new_sku = $product['sku'] . '-CF-' . $target_period['year'] . $target_period['month'];
-            
-            // Insert carried product
-            $insert_sql = "INSERT INTO products (
-                name, sku, category_id, cost_price, selling_price, 
-                stock_quantity, min_stock, supplier, description, created_by,
-                period_id, period_year, period_month, added_date, added_by,
-                is_carried_forward, carried_from_period_id, is_active
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), ?, 1, ?, 1)";
-            
-            $insert_stmt = $db->prepare($insert_sql);
-            $insert_stmt->bind_param(
-                "ssiddiissiiiiiii",
-                $product['name'],
-                $new_sku,
-                $product['category_id'],
-                $product['cost_price'],
-                $product['selling_price'],
-                $product['stock_quantity'],
-                $product['min_stock'],
-                $product['supplier'],
-                $product['description'],
-                $user_id,
-                $target_period_id,
-                $target_period['year'],
-                $target_period['month'],
-                $user_id,
-                $source_period_id
-            );
-            
-            if ($insert_stmt->execute()) {
-                $new_product_id = $insert_stmt->insert_id;
-                $carried_count++;
-                
-                // Calculate carried value
-                $carried_value = $product['stock_quantity'] * $product['cost_price'];
-                $total_value += $carried_value;
-                
-                // Record in period_stock_carry table
-                $carry_record_sql = "INSERT INTO period_stock_carry (
-                    period_id, product_id, quantity, cost_price, carried_value
-                ) VALUES (?, ?, ?, ?, ?)";
-                
-                $carry_record_stmt = $db->prepare($carry_record_sql);
-                $carry_record_stmt->bind_param(
-                    "iiidd",
-                    $target_period_id,
-                    $new_product_id,
-                    $product['stock_quantity'],
-                    $product['cost_price'],
-                    $carried_value
-                );
-                $carry_record_stmt->execute();
-                
-                $carried_products[] = [
-                    'name' => $product['name'],
-                    'sku' => $product['sku'],
-                    'new_sku' => $new_sku,
-                    'quantity' => $product['stock_quantity'],
-                    'cost_price' => $product['cost_price'],
-                    'value' => $carried_value
-                ];
-            }
-        }
-        
-        // Create or update inventory period record
-        $period_month = $target_period['year'] . '-' . str_pad($target_period['month'], 2, '0', STR_PAD_LEFT);
-        
-        // Check if inventory period record exists
-        $check_inv_sql = "SELECT id FROM inventory_periods 
-                         WHERE user_id = ? 
-                         AND period_month = ?";
-        $check_inv_stmt = $db->prepare($check_inv_sql);
-        $check_inv_stmt->bind_param("is", $user_id, $period_month);
-        $check_inv_stmt->execute();
-        $inv_exists = $check_inv_stmt->get_result()->num_rows > 0;
-        
-        if ($inv_exists) {
-            // Update existing inventory period
-            $update_inv_sql = "UPDATE inventory_periods 
-                              SET opening_balance = ?, current_inventory = ?
-                              WHERE user_id = ? AND period_month = ?";
-            $update_inv_stmt = $db->prepare($update_inv_sql);
-            $update_inv_stmt->bind_param("ddis", $total_value, $total_value, $user_id, $period_month);
-            $update_inv_stmt->execute();
+    // Generate quotation from template
+    $quotation = generateQuotationFromTemplate($template_id, $quotation_data, $conn);
+    
+    if ($quotation && isset($_POST[\'save_quotation\'])) {
+        $quotation[\'template_id\'] = $template_id;
+        $saved = saveQuotationToDatabase($quotation, $user_id, $active_period[\'id\'] ?? 1, $conn);
+        if ($saved) {
+            $_SESSION[\'success_message\'] = "Quotation generated and saved!";
         } else {
-            // Create new inventory period
-            $insert_inv_sql = "INSERT INTO inventory_periods (
-                user_id, period_month, opening_balance, current_inventory, 
-                closing_balance, total_sales, total_profit, status
-            ) VALUES (?, ?, ?, ?, ?, 0, 0, 'active')";
-            
-            $insert_inv_stmt = $db->prepare($insert_inv_sql);
-            $insert_inv_stmt->bind_param(
-                "isddd",
-                $user_id,
-                $period_month,
-                $total_value,
-                $total_value,
-                $total_value
-            );
-            $insert_inv_stmt->execute();
+            $_SESSION[\'error_message\'] = "Failed to save quotation.";
         }
-        
-        // Commit transaction
-        $db->commit();
-        
-        return [
-            'success' => true,
-            'count' => $carried_count,
-            'total_value' => $total_value,
-            'products' => $carried_products,
-            'source_period' => $source_period['period_name'],
-            'target_period' => $target_period['period_name'],
-            'message' => "Successfully carried forward {$carried_count} products from {$source_period['period_name']} to {$target_period['period_name']}. Total value: KSH " . number_format($total_value, 2)
-        ];
-        
-    } catch (Exception $e) {
-        $db->rollback();
-        return [
-            'success' => false,
-            'message' => 'Error: ' . $e->getMessage()
-        ];
+        header("Location: " . $_SERVER[\'PHP_SELF\']);
+        exit();
     }
 }
-?>
+');
+echo "</pre>";
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Carry Forward Products - Vinmel Irrigation</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <style>
-        .card-header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-        }
-        .product-list {
-            max-height: 400px;
-            overflow-y: auto;
-        }
-        .value-badge {
-            font-size: 0.8rem;
-            font-family: 'Courier New', monospace;
-        }
-    </style>
-</head>
-<body>
-    <?php include 'nav_bar.php'; ?>
+echo "<h3>Potential Issues:</h3>";
+echo "<ol>";
+echo "<li><strong>Missing Period:</strong> If \$active_period is not set, it uses 1 as default</li>";
+echo "<li><strong>Wrong User ID:</strong> Make sure \$user_id is set from session</li>";
+echo "<li><strong>Missing Redirect:</strong> What happens if save fails? No error is shown</li>";
+echo "<li><strong>Session Messages:</strong> Might not be displayed properly</li>";
+echo "</ol>";
+
+echo "<h3>Suggested Fix:</h3>";
+echo "<pre style='background:#ccffcc;'>";
+echo htmlspecialchars('
+// FIXED VERSION:
+if ($_SERVER[\'REQUEST_METHOD\'] === \'POST\' && isset($_POST[\'generate_from_template\'])) {
+    $template_id = $_POST[\'template_id\'] ?? null;
+    $quotation_data = $_POST;
     
-    <div class="main-content">
-        <?php include 'header.php'; ?>
-
-        <div class="content-area">
-            <div class="container-fluid">
-                <!-- Page Header -->
-                <div class="dashboard-header mb-4">
-                    <div>
-                        <h1 class="h2">Carry Forward Products Between Periods</h1>
-                        <p class="lead mb-0">Transfer products from one period to another as opening stock</p>
-                    </div>
-                </div>
-
-                <!-- Alerts -->
-                <?php if ($message): ?>
-                    <div class="alert alert-success alert-dismissible fade show" role="alert">
-                        <i class="fas fa-check-circle me-2"></i><?= $message ?>
-                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                    </div>
-                <?php endif; ?>
-
-                <?php if ($error): ?>
-                    <div class="alert alert-danger alert-dismissible fade show" role="alert">
-                        <i class="fas fa-exclamation-triangle me-2"></i><?= $error ?>
-                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                    </div>
-                <?php endif; ?>
-
-                <div class="row">
-                    <!-- Carry Forward Form -->
-                    <div class="col-md-6">
-                        <div class="card">
-                            <div class="card-header">
-                                <h5 class="mb-0"><i class="fas fa-forward me-2"></i>Carry Forward Products</h5>
-                            </div>
-                            <div class="card-body">
-                                <form method="POST">
-                                    <div class="mb-3">
-                                        <label for="source_period_id" class="form-label">Source Period (From)</label>
-                                        <select class="form-select" id="source_period_id" name="source_period_id" required>
-                                            <option value="">Select Source Period</option>
-                                            <?php foreach ($periods as $period): 
-                                                if ($period['is_locked']): ?>
-                                                    <option value="<?= $period['id'] ?>">
-                                                        <?= $period['period_name'] ?> (Locked)
-                                                    </option>
-                                                <?php endif; ?>
-                                            <?php endforeach; ?>
-                                        </select>
-                                        <div class="form-text">Select the period to carry products from (usually a locked period)</div>
-                                    </div>
-                                    
-                                    <div class="mb-3">
-                                        <label for="target_period_id" class="form-label">Target Period (To)</label>
-                                        <select class="form-select" id="target_period_id" name="target_period_id" required>
-                                            <option value="">Select Target Period</option>
-                                            <?php foreach ($periods as $period): 
-                                                if (!$period['is_locked']): ?>
-                                                    <option value="<?= $period['id'] ?>">
-                                                        <?= $period['period_name'] ?> (Active)
-                                                    </option>
-                                                <?php endif; ?>
-                                            <?php endforeach; ?>
-                                        </select>
-                                        <div class="form-text">Select the new/active period to carry products to</div>
-                                    </div>
-                                    
-                                    <div class="alert alert-info">
-                                        <i class="fas fa-info-circle me-2"></i>
-                                        <strong>Note:</strong> This will create new product records in the target period with the same stock quantities from the source period. Original products in source period will not be modified.
-                                    </div>
-                                    
-                                    <button type="submit" name="carry_forward" class="btn btn-primary btn-lg w-100" onclick="return confirm('Are you sure you want to carry forward products? This action cannot be undone.')">
-                                        <i class="fas fa-forward me-2"></i>Carry Forward Products
-                                    </button>
-                                </form>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Instructions -->
-                    <div class="col-md-6">
-                        <div class="card">
-                            <div class="card-header">
-                                <h5 class="mb-0"><i class="fas fa-info-circle me-2"></i>How It Works</h5>
-                            </div>
-                            <div class="card-body">
-                                <ol class="mb-4">
-                                    <li class="mb-2">Select a <strong>locked period</strong> as the source (products will be copied from here)</li>
-                                    <li class="mb-2">Select an <strong>active period</strong> as the target (products will be created here)</li>
-                                    <li class="mb-2">Click "Carry Forward Products" to execute the transfer</li>
-                                    <li class="mb-2">The system will create new product records in the target period</li>
-                                    <li>Original products remain unchanged in the source period</li>
-                                </ol>
-                                
-                                <div class="alert alert-warning">
-                                    <h6><i class="fas fa-exclamation-triangle me-2"></i>Important Notes:</h6>
-                                    <ul class="mb-0">
-                                        <li>Only products with positive stock quantities will be carried forward</li>
-                                        <li>Carried products will have "-CF" appended to their SKU</li>
-                                        <li>This operation records inventory value transfer for accounting</li>
-                                        <li>Target period should not already have carried-forward products</li>
-                                    </ul>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Quick Stats -->
-                        <div class="card mt-4">
-                            <div class="card-body">
-                                <h6><i class="fas fa-chart-bar me-2"></i>Quick Statistics</h6>
-                                <div class="row text-center mt-3">
-                                    <div class="col-6">
-                                        <div class="display-6 fw-bold text-primary">
-                                            <?= count($periods) ?>
-                                        </div>
-                                        <small class="text-muted">Total Periods</small>
-                                    </div>
-                                    <div class="col-6">
-                                        <div class="display-6 fw-bold text-success">
-                                            <?= count(array_filter($periods, fn($p) => !$p['is_locked'])) ?>
-                                        </div>
-                                        <small class="text-muted">Active Periods</small>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Results Display -->
-                <?php if ($carry_result && $carry_result['success']): ?>
-                <div class="row mt-4">
-                    <div class="col-12">
-                        <div class="card">
-                            <div class="card-header bg-success text-white">
-                                <h5 class="mb-0"><i class="fas fa-check-circle me-2"></i>Carry Forward Results</h5>
-                            </div>
-                            <div class="card-body">
-                                <div class="alert alert-success mb-4">
-                                    <h6>Summary</h6>
-                                    <p class="mb-0">
-                                        <strong>From:</strong> <?= $carry_result['source_period'] ?><br>
-                                        <strong>To:</strong> <?= $carry_result['target_period'] ?><br>
-                                        <strong>Products Carried:</strong> <?= $carry_result['count'] ?><br>
-                                        <strong>Total Value:</strong> KSH <?= number_format($carry_result['total_value'], 2) ?>
-                                    </p>
-                                </div>
-                                
-                                <h6>Carried Products Details</h6>
-                                <div class="table-responsive product-list">
-                                    <table class="table table-sm">
-                                        <thead>
-                                            <tr>
-                                                <th>Product Name</th>
-                                                <th>Original SKU</th>
-                                                <th>New SKU</th>
-                                                <th>Quantity</th>
-                                                <th>Cost Price</th>
-                                                <th>Value</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <?php foreach ($carry_result['products'] as $product): ?>
-                                            <tr>
-                                                <td><?= htmlspecialchars($product['name']) ?></td>
-                                                <td><span class="badge bg-secondary"><?= $product['sku'] ?></span></td>
-                                                <td><span class="badge bg-success"><?= $product['new_sku'] ?></span></td>
-                                                <td><?= $product['quantity'] ?></td>
-                                                <td>KSH <?= number_format($product['cost_price'], 2) ?></td>
-                                                <td>
-                                                    <span class="badge bg-primary value-badge">
-                                                        KSH <?= number_format($product['value'], 2) ?>
-                                                    </span>
-                                                </td>
-                                            </tr>
-                                            <?php endforeach; ?>
-                                        </tbody>
-                                    </table>
-                                </div>
-                                
-                                <div class="text-center mt-3">
-                                    <a href="products.php?period_id=<?= $_POST['target_period_id'] ?>" class="btn btn-primary">
-                                        <i class="fas fa-boxes me-2"></i>View Products in Target Period
-                                    </a>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <?php endif; ?>
-            </div>
-        </div>
-    </div>
-
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        // Auto-select the latest locked period as source
-        document.addEventListener('DOMContentLoaded', function() {
-            const sourceSelect = document.getElementById('source_period_id');
-            const targetSelect = document.getElementById('target_period_id');
-            
-            // Find locked periods and select the latest one
-            let latestLockedId = null;
-            for (let option of sourceSelect.options) {
-                if (option.text.includes('(Locked)')) {
-                    latestLockedId = option.value;
-                }
-            }
-            if (latestLockedId) {
-                sourceSelect.value = latestLockedId;
+    // Generate quotation from template
+    $quotation = generateQuotationFromTemplate($template_id, $quotation_data, $conn);
+    
+    if ($quotation) {
+        if (isset($_POST[\'save_quotation\'])) {
+            // Make sure we have all required data
+            if (!isset($active_period[\'id\'])) {
+                // Try to get any period
+                $stmt = $conn->prepare("SELECT id FROM time_periods LIMIT 1");
+                $stmt->execute();
+                $result = $stmt->get_result();
+                $period = $result->fetch_assoc();
+                $stmt->close();
+                $period_id = $period[\'id\'] ?? 1;
+            } else {
+                $period_id = $active_period[\'id\'];
             }
             
-            // Find active periods and select the first one
-            let firstActiveId = null;
-            for (let option of targetSelect.options) {
-                if (option.text.includes('(Active)')) {
-                    firstActiveId = option.value;
-                    break;
-                }
+            $quotation[\'template_id\'] = $template_id;
+            $saved = saveQuotationToDatabase($quotation, $user_id, $period_id, $conn);
+            
+            if ($saved) {
+                $_SESSION[\'success_message\'] = "Quotation generated and saved successfully!";
+            } else {
+                $_SESSION[\'error_message\'] = "Failed to save quotation. Please try again.";
             }
-            if (firstActiveId) {
-                targetSelect.value = firstActiveId;
-            }
-        });
-    </script>
-</body>
-</html>
+        } else {
+            // Just generate without saving
+            $_SESSION[\'quotation_data\'] = $quotation;
+            $_SESSION[\'success_message\'] = "Quotation generated successfully!";
+        }
+    } else {
+        $_SESSION[\'error_message\'] = "Failed to generate quotation. Template not found.";
+    }
+    
+    header("Location: " . $_SERVER[\'PHP_SELF\']);
+    exit();
+}
+');
+echo "</pre>";
+echo "</div>";
+
+// Final test - simulate the exact flow
+echo "<div class='section'>";
+echo "<h2>5. Final Test - Simulate Entire Flow</h2>";
+
+echo "<form method='POST' action='templates.php' style='border:2px solid green;padding:20px;'>";
+echo "<h3>This is EXACTLY what your form sends:</h3>";
+echo "<input type='hidden' name='generate_from_template' value='1'>";
+echo "<input type='hidden' name='template_id' value='2'>";
+echo "<input type='hidden' name='save_quotation' value='1'>";
+echo "<div style='margin:10px 0;'>";
+echo "<label><strong>quotation_number:</strong></label><br>";
+echo "<input type='text' name='quotation_number' value='QTN-" . date('Ymd-His') . "' readonly style='width:300px;padding:5px;background:#f0f0f0;'>";
+echo "</div>";
+echo "<div style='margin:10px 0;'>";
+echo "<label><strong>project_name:</strong> *</label><br>";
+echo "<input type='text' name='project_name' value='Live Test Project' required style='width:300px;padding:5px;'>";
+echo "</div>";
+echo "<div style='margin:10px 0;'>";
+echo "<label><strong>land_size:</strong></label><br>";
+echo "<input type='number' name='land_size' value='3.0' step='0.01' style='width:150px;padding:5px;'>";
+echo "</div>";
+echo "<button type='submit' style='background:green;color:white;border:none;padding:10px 20px;border-radius:5px;cursor:pointer;font-weight:bold;'>
+    <i class='fas fa-paper-plane'></i> SUBMIT TO templates.php
+</button>";
+echo "<p><small>This will trigger the exact same code path as clicking 'Use' on a template</small></p>";
+echo "</form>";
+echo "</div>";
+
+$conn->close();
+echo "</body></html>";

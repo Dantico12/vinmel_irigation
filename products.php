@@ -1179,8 +1179,6 @@ header("Content-Security-Policy: " . $csp);
     <meta name="robots" content="noindex, nofollow">
     <title>Products Management - Vinmel Irrigation</title>
     
-    <!-- Removed redundant CSP meta tag - using HTTP header instead -->
-    
     <!-- Use integrity hashes for CDN resources -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet" 
           integrity="sha384-1BmE4kWBq78iYhFldvKuhfTAU6auU8tT94WrHftjDbrCEXSU1oBoqyl2QvZ6jIW3" 
@@ -1189,84 +1187,6 @@ header("Content-Security-Policy: " . $csp);
           integrity="sha384-3B6NwesSXE7YJlcLI9RpRqGf2p/EgVH8BgoKTaUrmKNDkHPStTQ3EyoYjCGXaOTS" 
           crossorigin="anonymous">
     <link href="style.css" rel="stylesheet">
-    <style>
-        .product-icon {
-            width: 40px;
-            height: 40px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 50%;
-            font-size: 0.9rem;
-        }
-        .card-primary { border-left: 4px solid #007bff; }
-        .card-success { border-left: 4px solid #28a745; }
-        .card-warning { border-left: 4px solid #ffc107; }
-        .card-info { border-left: 4px solid #17a2b8; }
-        .card-danger { border-left: 4px solid #dc3545; }
-        .icon-bg {
-            width: 50px;
-            height: 50px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .icon-bg-primary { background-color: rgba(0, 123, 255, 0.1); color: #007bff; }
-        .icon-bg-success { background-color: rgba(40, 167, 69, 0.1); color: #28a745; }
-        .icon-bg-warning { background-color: rgba(255, 193, 7, 0.1); color: #ffc107; }
-        .icon-bg-danger { background-color: rgba(220, 53, 69, 0.1); color: #dc3545; }
-        .period-filter-card {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-        }
-        .sku-badge {
-            background-color: #e9ecef;
-            color: #495057;
-            font-family: 'Courier New', monospace;
-            font-size: 0.75rem;
-        }
-        .security-badge {
-            font-size: 0.7rem;
-            padding: 2px 6px;
-            background: #28a745;
-            color: white;
-            border-radius: 3px;
-            margin-left: 5px;
-        }
-        .audit-log {
-            font-size: 0.8rem;
-            color: #6c757d;
-            background-color: #f8f9fa;
-            padding: 5px 10px;
-            border-radius: 4px;
-            margin-top: 5px;
-        }
-        .stock-alert-card {
-            background: linear-gradient(135deg, #ff9966 0%, #ff5e62 100%);
-            color: white;
-            border: none;
-        }
-        .update-stock-form {
-            background-color: #f8f9fa;
-            padding: 15px;
-            border-radius: 8px;
-            border-left: 4px solid #28a745;
-        }
-        .modal-backdrop {
-            z-index: 1040;
-        }
-        .modal {
-            z-index: 1050;
-        }
-        .debug-alert {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            z-index: 9999;
-            max-width: 400px;
-        }
-    </style>
 </head>
 <body>
     <?php include 'nav_bar.php'; ?>
