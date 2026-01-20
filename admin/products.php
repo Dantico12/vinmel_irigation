@@ -589,7 +589,6 @@ function getStockStatus($current, $min) {
 // Log page access
 securityLog("Accessed inventory management page", "INFO", $user_id);
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -599,121 +598,6 @@ securityLog("Accessed inventory management page", "INFO", $user_id);
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <link href="style.css" rel="stylesheet">
-    <style>
-        .period-info-card {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border-radius: 15px;
-            padding: 1.5rem;
-            margin-bottom: 2rem;
-        }
-        .balance-flow {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border-radius: 10px;
-            padding: 1rem;
-            margin: 1rem 0;
-        }
-        .balance-step {
-            text-align: center;
-            padding: 0.5rem;
-        }
-        .balance-arrow {
-            font-size: 1.5rem;
-            color: white;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 100%;
-        }
-        .kpi-card {
-            border: none;
-            border-radius: 12px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            transition: transform 0.2s;
-            height: 100%;
-        }
-        .kpi-card:hover {
-            transform: translateY(-5px);
-        }
-        .kpi-value {
-            font-size: 1.8rem;
-            font-weight: 700;
-            margin-bottom: 0.5rem;
-        }
-        .kpi-label {
-            font-size: 0.9rem;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            opacity: 0.8;
-        }
-        .balance-section {
-            background: #f8f9fa;
-            border-radius: 10px;
-            padding: 1.5rem;
-            margin-bottom: 1.5rem;
-        }
-        .carry-forward-card {
-            border-left: 4px solid #17a2b8;
-        }
-        .balance-change-positive {
-            color: #28a745;
-            font-weight: bold;
-        }
-        .balance-change-negative {
-            color: #dc3545;
-            font-weight: bold;
-        }
-        .period-navigation {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1rem;
-        }
-        .period-selector {
-            min-width: 250px;
-        }
-        .period-nav-btn {
-            padding: 8px 16px;
-            border-radius: 8px;
-            text-decoration: none;
-            transition: all 0.3s ease;
-        }
-        .period-nav-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-        }
-        .product-icon {
-            width: 40px;
-            height: 40px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .stock-status-high { color: #28a745; }
-        .stock-status-medium { color: #ffc107; }
-        .stock-status-low { color: #fd7e14; }
-        .stock-status-out { color: #dc3545; }
-        .stock-status-unknown { color: #6c757d; }
-        .progress {
-            height: 6px;
-        }
-        .badge-super-admin {
-            background: #ffc107;
-            color: #000;
-        }
-        .added-by-badge {
-            background: #6c757d;
-            color: white;
-            font-size: 0.75rem;
-            padding: 2px 6px;
-            border-radius: 3px;
-        }
-        .admin-view-badge {
-            background: #17a2b8;
-            color: white;
-        }
-    </style>
     <meta name="csrf-token" content="<?php echo htmlspecialchars($csrf_token, ENT_QUOTES, 'UTF-8'); ?>">
 </head>
 <body>

@@ -86,7 +86,7 @@ function redirectBasedOnRole() {
         exit();
     }
     if (isAdmin()) {
-        header("Location: /vinner/admin/admin_dashboard.php");
+        header("Location: /irrigation/vinmel_irigation/admin/admin_dashboard.php");
         exit();
     }
     header("Location: dashboard.php");

@@ -134,9 +134,7 @@ if ($current_period) {
 // Include header and navigation
 include 'header.php'; 
 include 'nav_bar.php'; 
-?>
-
-<!DOCTYPE html>
+?><!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -146,54 +144,22 @@ include 'nav_bar.php';
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="style.css" rel="stylesheet">
-    <style>
-        .dashboard-card {
-            background: white;
-            border-radius: 10px;
-            padding: 20px;
-            margin-bottom: 20px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            border-left: 4px solid #007bff;
-        }
-        .chart-container {
-            background: white;
-            border-radius: 10px;
-            padding: 20px;
-            margin-bottom: 20px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        .summary-stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 1rem;
-        }
-        .stat-card {
-            background: white;
-            border-radius: 8px;
-            padding: 1.5rem;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-            text-align: center;
-        }
-        .stat-card h6 {
-            font-size: 0.9rem;
-            color: #6c757d;
-            margin-bottom: 0.5rem;
-        }
-        .stat-card h3 {
-            font-size: 1.75rem;
-            margin: 0;
-            color: #212529;
-        }
-    </style>
 </head>
 <body>
-    <div class="container-fluid">
-        <div class="row">
-            <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4">
-                <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
-                    <h1 class="h2">Annual Dashboard - <?= (int)$selected_year ?></h1>
-                    <div class="btn-toolbar mb-2 mb-md-0">
-                        <div class="btn-group me-2">
+    <?php include 'header.php'; ?>
+    <?php include 'nav_bar.php'; ?>
+    
+    <div class="main-content">
+        <div class="content-area">
+            <div class="container-fluid">
+                <!-- Dashboard Header -->
+                <div class="dashboard-header">
+                    <div>
+                        <h1><i class="fas fa-chart-bar me-2"></i>Annual Dashboard - <?= (int)$selected_year ?></h1>
+                        <p class="text-muted">Yearly financial overview and analytics</p>
+                    </div>
+                    <div>
+                        <div class="annual-year-selector">
                             <select class="form-select" id="yearSelect">
                                 <?php for ($year = 2024; $year <= 2028; $year++): ?>
                                     <option value="<?= $year ?>" <?= $year == $selected_year ? 'selected' : '' ?>>
@@ -205,79 +171,181 @@ include 'nav_bar.php';
                     </div>
                 </div>
 
-                <!-- Annual Summary -->
+                <!-- Annual Summary Stats -->
                 <div class="summary-stats">
-                    <div class="stat-card">
-                        <h6>Total Annual Income</h6>
-                        <h3>KSH <?= number_format($annual_income, 2) ?></h3>
+                    <div class="stat-card primary">
+                        <div class="stat-icon">
+                            <i class="fas fa-money-bill-wave"></i>
+                        </div>
+                        <div class="stat-value">KSH <?= number_format($annual_income, 2) ?></div>
+                        <div class="stat-label">Total Annual Income</div>
                         <small class="text-muted">Net income for <?= (int)$selected_year ?></small>
                     </div>
-                    <div class="stat-card">
-                        <h6>Total Tax Collected</h6>
-                        <h3>KSH <?= number_format($annual_tax, 2) ?></h3>
+                    
+                    <div class="stat-card info">
+                        <div class="stat-icon">
+                            <i class="fas fa-percentage"></i>
+                        </div>
+                        <div class="stat-value">KSH <?= number_format($annual_tax, 2) ?></div>
+                        <div class="stat-label">Total Tax Collected</div>
                         <small class="text-muted">VAT collected</small>
                     </div>
-                    <div class="stat-card">
-                        <h6>Total Transactions</h6>
-                        <h3><?= number_format($annual_transactions) ?></h3>
+                    
+                    <div class="stat-card success">
+                        <div class="stat-icon">
+                            <i class="fas fa-receipt"></i>
+                        </div>
+                        <div class="stat-value"><?= number_format($annual_transactions) ?></div>
+                        <div class="stat-label">Total Transactions</div>
                         <small class="text-muted">Sales transactions</small>
                     </div>
                 </div>
 
-                <!-- Charts -->
+                <!-- Charts Section -->
                 <div class="row mt-4">
-                    <div class="col-md-8">
-                        <div class="chart-container">
-                            <h5>Monthly Income Trend - <?= (int)$selected_year ?></h5>
-                            <canvas id="monthlyTrendChart" height="200"></canvas>
+                    <div class="col-lg-8">
+                        <div class="annual-chart-card">
+                            <div class="chart-header">
+                                <h5><i class="fas fa-chart-line me-2"></i>Monthly Income Trend - <?= (int)$selected_year ?></h5>
+                            </div>
+                            <div class="chart-body">
+                                <canvas id="monthlyTrendChart" height="250"></canvas>
+                            </div>
                         </div>
                     </div>
-                    <div class="col-md-4">
-                        <div class="chart-container">
-                            <h5>Income by Category</h5>
-                            <canvas id="categoryChart" height="200"></canvas>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Monthly Breakdown -->
-                <div class="row mt-4">
-                    <div class="col-12">
-                        <div class="chart-container">
-                            <h5>Monthly Breakdown</h5>
-                            <div class="table-responsive">
-                                <table class="table table-striped">
-                                    <thead>
-                                        <tr>
-                                            <th>Month</th>
-                                            <th>Income</th>
-                                            <th>Tax</th>
-                                            <th>Transactions</th>
-                                            <th>Avg. Transaction</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <?php for ($month = 1; $month <= 12; $month++): 
-                                            $data = $monthly_data[$month] ?? ['monthly_income' => 0, 'monthly_tax' => 0, 'transaction_count' => 0];
-                                            $avg_transaction = $data['transaction_count'] > 0 
-                                                ? $data['monthly_income'] / $data['transaction_count'] 
-                                                : 0;
-                                        ?>
-                                            <tr>
-                                                <td><?= $month_names[$month] ?></td>
-                                                <td>KSH <?= number_format($data['monthly_income'], 2) ?></td>
-                                                <td>KSH <?= number_format($data['monthly_tax'], 2) ?></td>
-                                                <td><?= number_format($data['transaction_count']) ?></td>
-                                                <td>KSH <?= number_format($avg_transaction, 2) ?></td>
-                                            </tr>
-                                        <?php endfor; ?>
-                                    </tbody>
-                                </table>
+                    
+                    <div class="col-lg-4">
+                        <div class="annual-chart-card">
+                            <div class="chart-header">
+                                <h5><i class="fas fa-chart-pie me-2"></i>Income by Category</h5>
+                            </div>
+                            <div class="chart-body">
+                                <canvas id="categoryChart" height="250"></canvas>
                             </div>
                         </div>
                     </div>
                 </div>
-            </main>
+
+                <!-- Monthly Breakdown Table -->
+                <div class="row mt-4">
+                    <div class="col-12">
+                        <div class="annual-chart-card">
+                            <div class="chart-header">
+                                <h5><i class="fas fa-table me-2"></i>Monthly Breakdown</h5>
+                            </div>
+                            <div class="chart-body">
+                                <div class="table-responsive">
+                                    <table class="table annual-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Month</th>
+                                                <th>Income</th>
+                                                <th>Tax</th>
+                                                <th>Transactions</th>
+                                                <th>Avg. Transaction</th>
+                                                <th>Tax %</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php for ($month = 1; $month <= 12; $month++): 
+                                                $data = $monthly_data[$month] ?? ['monthly_income' => 0, 'monthly_tax' => 0, 'transaction_count' => 0];
+                                                $avg_transaction = $data['transaction_count'] > 0 
+                                                    ? $data['monthly_income'] / $data['transaction_count'] 
+                                                    : 0;
+                                                $tax_percentage = $data['monthly_income'] > 0 
+                                                    ? ($data['monthly_tax'] / $data['monthly_income']) * 100 
+                                                    : 0;
+                                            ?>
+                                                <tr>
+                                                    <td><strong><?= $month_names[$month] ?></strong></td>
+                                                    <td class="text-success fw-bold">KSH <?= number_format($data['monthly_income'], 2) ?></td>
+                                                    <td class="text-info">KSH <?= number_format($data['monthly_tax'], 2) ?></td>
+                                                    <td><span class="badge bg-primary"><?= number_format($data['transaction_count']) ?></span></td>
+                                                    <td>KSH <?= number_format($avg_transaction, 2) ?></td>
+                                                    <td>
+                                                        <span class="badge bg-<?= $tax_percentage > 15 ? 'danger' : 'success' ?>">
+                                                            <?= number_format($tax_percentage, 1) ?>%
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            <?php endfor; ?>
+                                        </tbody>
+                                        <tfoot>
+                                            <tr class="table-active">
+                                                <td><strong>TOTAL</strong></td>
+                                                <td class="text-success fw-bold">KSH <?= number_format($annual_income, 2) ?></td>
+                                                <td class="text-info">KSH <?= number_format($annual_tax, 2) ?></td>
+                                                <td><span class="badge bg-primary"><?= number_format($annual_transactions) ?></span></td>
+                                                <td>KSH <?= number_format($annual_income / max($annual_transactions, 1), 2) ?></td>
+                                                <td>
+                                                    <span class="badge bg-<?= ($annual_tax / max($annual_income, 1) * 100) > 15 ? 'danger' : 'success' ?>">
+                                                        <?= number_format($annual_tax / max($annual_income, 1) * 100, 1) ?>%
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        </tfoot>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Category Breakdown -->
+                <?php if (!empty($category_totals)): ?>
+                <div class="row mt-4">
+                    <div class="col-12">
+                        <div class="annual-chart-card">
+                            <div class="chart-header">
+                                <h5><i class="fas fa-tags me-2"></i>Category Breakdown</h5>
+                            </div>
+                            <div class="chart-body">
+                                <div class="table-responsive">
+                                    <table class="table annual-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Category</th>
+                                                <th>Total Income</th>
+                                                <th>% of Total</th>
+                                                <th>Avg. Monthly</th>
+                                                <th>Trend</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php 
+                                            $total_category_income = array_sum(array_column($category_totals, 'category_total'));
+                                            foreach ($category_totals as $category): 
+                                                $percentage = $total_category_income > 0 ? ($category['category_total'] / $total_category_income) * 100 : 0;
+                                                $monthly_avg = $category['category_total'] / 12;
+                                            ?>
+                                                <tr>
+                                                    <td><strong><?= $category['category_name'] ?></strong></td>
+                                                    <td class="text-success fw-bold">KSH <?= number_format($category['category_total'], 2) ?></td>
+                                                    <td>
+                                                        <div class="progress">
+                                                            <div class="progress-bar" style="width: <?= $percentage ?>%">
+                                                                <?= number_format($percentage, 1) ?>%
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                    <td>KSH <?= number_format($monthly_avg, 2) ?></td>
+                                                    <td>
+                                                        <span class="trend-indicator positive">
+                                                            <i class="fas fa-arrow-up"></i>
+                                                            <?= number_format(($percentage / 100) * 10, 1) ?>%
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <?php endif; ?>
+            </div>
         </div>
     </div>
 
@@ -289,10 +357,12 @@ include 'nav_bar.php';
 
         // Prepare chart data
         const monthlyIncome = [];
+        const monthlyTax = [];
         const monthlyLabels = [];
         for (let i = 1; i <= 12; i++) {
             const monthData = <?php echo json_encode($monthly_data); ?>;
             monthlyIncome.push(monthData[i] ? monthData[i].monthly_income : 0);
+            monthlyTax.push(monthData[i] ? monthData[i].monthly_tax : 0);
             monthlyLabels.push(<?php echo json_encode(array_values($month_names)); ?>[i-1]);
         }
 
@@ -302,23 +372,64 @@ include 'nav_bar.php';
             type: 'bar',
             data: {
                 labels: monthlyLabels,
-                datasets: [{
-                    label: 'Monthly Income',
-                    data: monthlyIncome,
-                    backgroundColor: 'rgba(40, 167, 69, 0.8)',
-                    borderColor: 'rgba(40, 167, 69, 1)',
-                    borderWidth: 1
-                }]
+                datasets: [
+                    {
+                        label: 'Monthly Income',
+                        data: monthlyIncome,
+                        backgroundColor: 'rgba(40, 167, 69, 0.8)',
+                        borderColor: 'rgba(40, 167, 69, 1)',
+                        borderWidth: 1,
+                        yAxisID: 'y'
+                    },
+                    {
+                        label: 'Monthly Tax',
+                        data: monthlyTax,
+                        backgroundColor: 'rgba(23, 162, 184, 0.8)',
+                        borderColor: 'rgba(23, 162, 184, 1)',
+                        borderWidth: 1,
+                        yAxisID: 'y1',
+                        type: 'line'
+                    }
+                ]
             },
             options: {
                 responsive: true,
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
                 scales: {
                     y: {
+                        type: 'linear',
+                        display: true,
+                        position: 'left',
                         beginAtZero: true,
                         ticks: {
                             callback: function(value) {
                                 return 'KSH ' + value.toLocaleString();
                             }
+                        },
+                        title: {
+                            display: true,
+                            text: 'Income (KSH)'
+                        }
+                    },
+                    y1: {
+                        type: 'linear',
+                        display: true,
+                        position: 'right',
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return 'KSH ' + value.toLocaleString();
+                            }
+                        },
+                        grid: {
+                            drawOnChartArea: false,
+                        },
+                        title: {
+                            display: true,
+                            text: 'Tax (KSH)'
                         }
                     }
                 },
@@ -326,7 +437,7 @@ include 'nav_bar.php';
                     tooltip: {
                         callbacks: {
                             label: function(context) {
-                                return 'KSH ' + context.parsed.y.toLocaleString();
+                                return context.dataset.label + ': KSH ' + context.parsed.y.toLocaleString();
                             }
                         }
                     }
@@ -341,22 +452,28 @@ include 'nav_bar.php';
 
         const categoryCtx = document.getElementById('categoryChart').getContext('2d');
         const categoryChart = new Chart(categoryCtx, {
-            type: 'pie',
+            type: 'doughnut',
             data: {
                 labels: categoryLabels,
                 datasets: [{
                     data: categoryValues,
                     backgroundColor: [
-                        '#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0',
-                        '#9966FF', '#FF9F40', '#FF6384', '#C9CBCF'
-                    ]
+                        '#2c3e50', '#3498db', '#e74c3c', '#2ecc71',
+                        '#9b59b6', '#f39c12', '#1abc9c', '#34495e'
+                    ],
+                    borderWidth: 1
                 }]
             },
             options: {
                 responsive: true,
+                cutout: '60%',
                 plugins: {
                     legend: {
-                        position: 'bottom'
+                        position: 'bottom',
+                        labels: {
+                            padding: 20,
+                            usePointStyle: true
+                        }
                     },
                     tooltip: {
                         callbacks: {

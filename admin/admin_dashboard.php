@@ -242,111 +242,170 @@ if ($result) {
                     <i class="fas fa-calendar me-1"></i>
                     <?php echo date('F j, Y'); ?>
                 </span>
-                <button class="btn btn-outline">
+                <button class="btn btn-outline-primary">
                     <i class="fas fa-download"></i>
                     Export Report
                 </button>
             </div>
         </div>
         
-        <!-- Stats Grid -->
-        <div class="stats-grid">
-            <!-- Total Income Card -->
-            <div class="stat-card primary">
-                <div class="stat-icon">
-                    <i class="fas fa-money-bill-wave"></i>
+        <!-- Current Period Status -->
+        <?php if ($current_period): ?>
+        <div class="period-status-display">
+            <div class="period-info-text">
+                <div class="period-name">Current Period: <?php echo date('F Y', strtotime($current_period['year'] . '-' . $current_period['month'] . '-01')); ?></div>
+                <div class="period-dates">
+                    <?php if ($current_period['start_date'] && $current_period['end_date']): ?>
+                        <?php echo date('M j', strtotime($current_period['start_date'])); ?> - <?php echo date('M j, Y', strtotime($current_period['end_date'])); ?>
+                    <?php else: ?>
+                        Full month period
+                    <?php endif; ?>
                 </div>
-                <div class="stat-value">KSH <?php echo number_format($stats['total_income']); ?></div>
-                <div class="stat-label">Total Income</div>
-                <div class="stat-change positive">
-                    <i class="fas fa-arrow-up"></i>
-                    Current Period
+            </div>
+            <span class="badge badge-success">
+                <i class="fas fa-circle me-1"></i>
+                Active
+            </span>
+        </div>
+        <?php endif; ?>
+        
+        <!-- Stats Grid -->
+        <div class="stats-grid-enhanced">
+            <!-- Total Income Card -->
+            <div class="stat-card-enhanced income">
+                <div class="stat-header">
+                    <div class="stat-icon-large">
+                        <i class="fas fa-money-bill-wave"></i>
+                    </div>
+                    <span class="stat-trend">
+                        <i class="fas fa-arrow-up"></i>
+                        Current Period
+                    </span>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-value-enhanced">KSH <?php echo number_format($stats['total_income']); ?></div>
+                    <div class="stat-label-enhanced">Total Income</div>
+                    <div class="stat-period">
+                        <i class="fas fa-chart-line me-1"></i>
+                        <?php echo $current_period ? date('F Y', strtotime($current_period['year'] . '-' . $current_period['month'] . '-01')) : 'All Time'; ?>
+                    </div>
                 </div>
             </div>
             
             <!-- Total Profit Card -->
-            <div class="stat-card success">
-                <div class="stat-icon">
-                    <i class="fas fa-chart-line"></i>
+            <div class="stat-card-enhanced profit">
+                <div class="stat-header">
+                    <div class="stat-icon-large">
+                        <i class="fas fa-chart-line"></i>
+                    </div>
+                    <span class="stat-trend">
+                        <i class="fas fa-chart-line"></i>
+                        Real Profit
+                    </span>
                 </div>
-                <div class="stat-value">KSH <?php echo number_format($stats['total_profit']); ?></div>
-                <div class="stat-label">Total Profit</div>
-                <div class="stat-change positive">
-                    <i class="fas fa-chart-line"></i>
-                    Real Profit
+                <div class="stat-content">
+                    <div class="stat-value-enhanced">KSH <?php echo number_format($stats['total_profit']); ?></div>
+                    <div class="stat-label-enhanced">Total Profit</div>
+                    <div class="stat-period">
+                        <i class="fas fa-calculator me-1"></i>
+                        Sales - Cost
+                    </div>
                 </div>
             </div>
             
             <!-- Products Card -->
-            <div class="stat-card info">
-                <div class="stat-icon">
-                    <i class="fas fa-boxes"></i>
+            <div class="stat-card-enhanced products">
+                <div class="stat-header">
+                    <div class="stat-icon-large">
+                        <i class="fas fa-boxes"></i>
+                    </div>
+                    <span class="stat-trend">
+                        <i class="fas fa-cube"></i>
+                        In Inventory
+                    </span>
                 </div>
-                <div class="stat-value"><?php echo $stats['product_count']; ?></div>
-                <div class="stat-label">Active Products</div>
-                <div class="stat-change positive">
-                    <i class="fas fa-cube"></i>
-                    In Inventory
+                <div class="stat-content">
+                    <div class="stat-value-enhanced"><?php echo $stats['product_count']; ?></div>
+                    <div class="stat-label-enhanced">Active Products</div>
+                    <div class="stat-period">
+                        <i class="fas fa-warehouse me-1"></i>
+                        Total Inventory Items
+                    </div>
                 </div>
             </div>
             
             <!-- Transactions Card -->
-            <div class="stat-card warning">
-                <div class="stat-icon">
-                    <i class="fas fa-receipt"></i>
+            <div class="stat-card-enhanced transactions">
+                <div class="stat-header">
+                    <div class="stat-icon-large">
+                        <i class="fas fa-receipt"></i>
+                    </div>
+                    <span class="stat-trend">
+                        <i class="fas fa-receipt"></i>
+                        <?php echo $current_period_id ? 'Current Period' : 'All Time'; ?>
+                    </span>
                 </div>
-                <div class="stat-value"><?php echo $stats['transaction_count']; ?></div>
-                <div class="stat-label">Total Transactions</div>
-                <div class="stat-change positive">
-                    <i class="fas fa-receipt"></i>
-                    All Time
+                <div class="stat-content">
+                    <div class="stat-value-enhanced"><?php echo $stats['transaction_count']; ?></div>
+                    <div class="stat-label-enhanced">Total Transactions</div>
+                    <div class="stat-period">
+                        <i class="fas fa-history me-1"></i>
+                        <?php echo $current_period ? date('F Y', strtotime($current_period['year'] . '-' . $current_period['month'] . '-01')) : 'All Time'; ?>
+                    </div>
                 </div>
             </div>
         </div>
         
-        <!-- Charts Row -->
-        <div class="d-grid" style="grid-template-columns: 2fr 1fr; gap: var(--spacing-lg);">
+        <!-- Charts Grid -->
+        <div class="charts-grid-enhanced">
             <!-- Monthly Income Chart -->
-            <div class="chart-container">
-                <div class="chart-header">
-                    <h3 class="chart-title">
+            <div class="chart-card-enhanced">
+                <div class="chart-header-enhanced">
+                    <h3 class="chart-title-enhanced">
                         <i class="fas fa-chart-bar me-2"></i>
                         Monthly Income (Last 6 Months)
                     </h3>
                 </div>
-                <canvas id="incomeChart" height="300"></canvas>
+                <div class="chart-body-enhanced">
+                    <canvas id="incomeChart"></canvas>
+                </div>
             </div>
             
             <!-- Sales by Category Chart -->
-            <div class="chart-container">
-                <div class="chart-header">
-                    <h3 class="chart-title">
+            <div class="chart-card-enhanced">
+                <div class="chart-header-enhanced">
+                    <h3 class="chart-title-enhanced">
                         <i class="fas fa-chart-pie me-2"></i>
                         Sales by Category
                     </h3>
                 </div>
-                <canvas id="categoryChart" height="300"></canvas>
+                <div class="chart-body-enhanced">
+                    <canvas id="categoryChart"></canvas>
+                </div>
             </div>
         </div>
         
-        <!-- Recent Activity & Low Stock -->
-        <div class="d-grid" style="grid-template-columns: 2fr 1fr; gap: var(--spacing-lg); margin-top: var(--spacing-lg);">
+        <!-- Activity Grid -->
+        <div class="activity-grid">
             <!-- Recent Transactions -->
-            <div class="dashboard-card">
-                <div class="card-header">
-                    <h3 class="card-title">
+            <div class="activity-card">
+                <div class="activity-card-header">
+                    <h3 class="activity-card-title">
                         <i class="fas fa-clock me-2"></i>
                         Recent Transactions
                     </h3>
-                    <a href="transactions.php" class="btn btn-outline">View All</a>
+                    <a href="transactions.php" class="btn btn-outline-primary btn-sm">
+                        View All <i class="fas fa-arrow-right ms-1"></i>
+                    </a>
                 </div>
-                <div class="card-body p-0">
-                    <div class="table-container">
-                        <table class="data-table">
+                <div class="activity-card-body p-0">
+                    <div class="table-responsive">
+                        <table class="recent-transactions-table">
                             <thead>
                                 <tr>
                                     <th>Date</th>
                                     <th>Receipt #</th>
+                                    <th>Customer</th>
                                     <th>Amount</th>
                                     <th>Status</th>
                                 </tr>
@@ -355,8 +414,11 @@ if ($result) {
                                 <?php foreach($recent_transactions as $transaction): ?>
                                 <tr>
                                     <td><?php echo date('M j, Y', strtotime($transaction['transaction_date'])); ?></td>
-                                    <td><?php echo $transaction['receipt_number']; ?></td>
-                                    <td>KSH <?php echo number_format($transaction['total_amount'], 2); ?></td>
+                                    <td>
+                                        <span class="badge badge-primary"><?php echo $transaction['receipt_number']; ?></span>
+                                    </td>
+                                    <td><?php echo htmlspecialchars($transaction['user_name']); ?></td>
+                                    <td class="transaction-amount">KSH <?php echo number_format($transaction['total_amount'], 2); ?></td>
                                     <td>
                                         <span class="badge badge-success">
                                             <i class="fas fa-check me-1"></i>
@@ -372,34 +434,52 @@ if ($result) {
             </div>
             
             <!-- Low Stock Alert -->
-            <div class="dashboard-card">
-                <div class="card-header">
-                    <h3 class="card-title">
-                        <i class="fas fa-exclamation-triangle me-2 text-warning"></i>
+            <div class="activity-card low-stock-alert">
+                <div class="activity-card-header">
+                    <h3 class="activity-card-title">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
                         Low Stock Alert
                     </h3>
                 </div>
-                <div class="card-body">
+                <div class="activity-card-body">
                     <?php if($stats['low_stock_count'] > 0): ?>
                         <div class="text-center mb-4">
-                            <div class="stat-value text-warning"><?php echo $stats['low_stock_count']; ?></div>
+                            <div class="low-stock-count"><?php echo $stats['low_stock_count']; ?></div>
                             <div class="stat-label">Items Need Restocking</div>
                         </div>
-                        <div class="d-flex flex-column gap-2">
-                            <?php foreach($low_stock_products as $product): ?>
-                            <div class="d-flex justify-content-between align-items-center p-2 border rounded">
-                                <span><?php echo htmlspecialchars($product['name']); ?></span>
-                                <span class="badge badge-warning"><?php echo $product['stock_quantity']; ?> left</span>
+                        <div class="mb-4">
+                            <?php foreach($low_stock_products as $product): 
+                                $stock_percentage = ($product['stock_quantity'] / $product['min_stock']) * 100;
+                            ?>
+                            <div class="low-stock-item">
+                                <div>
+                                    <div class="fw-bold"><?php echo htmlspecialchars($product['name']); ?></div>
+                                    <div class="text-muted small">
+                                        Stock: <?php echo $product['stock_quantity']; ?> / <?php echo $product['min_stock']; ?>
+                                    </div>
+                                    <div class="progress mt-1" style="height: 4px;">
+                                        <div class="progress-bar bg-warning" role="progressbar" 
+                                             style="width: <?php echo min(100, $stock_percentage); ?>%"
+                                             aria-valuenow="<?php echo $stock_percentage; ?>" 
+                                             aria-valuemin="0" 
+                                             aria-valuemax="100">
+                                        </div>
+                                    </div>
+                                </div>
+                                <span class="stock-warning-badge">
+                                    <?php echo $product['stock_quantity']; ?> left
+                                </span>
                             </div>
                             <?php endforeach; ?>
                         </div>
                     <?php else: ?>
-                        <div class="text-center text-muted py-4">
+                        <div class="text-center py-4">
                             <i class="fas fa-check-circle fa-3x text-success mb-3"></i>
-                            <p>All items are well stocked!</p>
+                            <h5 class="mb-2">All Stock Levels Good</h5>
+                            <p class="text-muted">All items are well stocked and ready for sale!</p>
                         </div>
                     <?php endif; ?>
-                    <div class="text-center mt-3">
+                    <div class="text-center">
                         <a href="products.php" class="btn btn-primary">
                             <i class="fas fa-boxes me-1"></i>
                             Manage Inventory
@@ -408,6 +488,30 @@ if ($result) {
                 </div>
             </div>
         </div>
+        
+        <!-- Quick Actions -->
+        <div class="quick-actions">
+            <a href="add_transaction.php" class="quick-action-btn">
+                <i class="fas fa-plus-circle"></i>
+                <span class="quick-action-label">New Sale</span>
+            </a>
+            <a href="add_product.php" class="quick-action-btn">
+                <i class="fas fa-box"></i>
+                <span class="quick-action-label">Add Product</span>
+            </a>
+            <a href="reports.php" class="quick-action-btn">
+                <i class="fas fa-chart-pie"></i>
+                <span class="quick-action-label">View Reports</span>
+            </a>
+            <a href="expenses.php" class="quick-action-btn">
+                <i class="fas fa-file-invoice-dollar"></i>
+                <span class="quick-action-label">Manage Expenses</span>
+            </a>
+            <a href="monthly.php" class="quick-action-btn">
+                <i class="fas fa-chart-line"></i>
+                <span class="quick-action-label">Analytics</span>
+            </a>
+        </div>
     </main>
     
     <!-- JavaScript -->
@@ -415,27 +519,64 @@ if ($result) {
     <script>
         // Initialize Charts with Real Data
         document.addEventListener('DOMContentLoaded', function() {
+            // Color Scheme
+            const colors = {
+                primary: '#3498db',
+                success: '#27ae60',
+                warning: '#f39c12',
+                danger: '#e74c3c',
+                info: '#17a2b8',
+                dark: '#2c3e50'
+            };
+            
+            // Chart Background Colors
+            const chartBackgrounds = [
+                '#3498db', '#27ae60', '#f39c12', '#e74c3c', '#9b59b6',
+                '#34495e', '#1abc9c', '#d35400', '#c0392b', '#8e44ad'
+            ];
+            
             // Monthly Income Chart
             const incomeCtx = document.getElementById('incomeChart').getContext('2d');
-            new Chart(incomeCtx, {
+            const incomeChart = new Chart(incomeCtx, {
                 type: 'bar',
                 data: {
                     labels: <?php echo json_encode($chart_data['month_names']); ?>,
                     datasets: [{
-                        label: 'Income',
+                        label: 'Monthly Income',
                         data: <?php echo json_encode($chart_data['monthly_income']); ?>,
-                        backgroundColor: '#27ae60',
-                        borderColor: '#27ae60',
-                        borderWidth: 1
+                        backgroundColor: 'rgba(52, 152, 219, 0.7)',
+                        borderColor: colors.primary,
+                        borderWidth: 2,
+                        borderRadius: 6,
+                        borderSkipped: false,
+                        hoverBackgroundColor: 'rgba(52, 152, 219, 1)',
                     }]
                 },
                 options: {
                     responsive: true,
+                    maintainAspectRatio: false,
                     plugins: {
                         legend: {
+                            display: true,
                             position: 'top',
+                            labels: {
+                                color: colors.dark,
+                                font: {
+                                    size: 12,
+                                    family: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif"
+                                },
+                                padding: 20
+                            }
                         },
                         tooltip: {
+                            backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                            titleColor: colors.dark,
+                            bodyColor: colors.dark,
+                            borderColor: '#ecf0f1',
+                            borderWidth: 1,
+                            cornerRadius: 8,
+                            padding: 12,
+                            displayColors: false,
                             callbacks: {
                                 label: function(context) {
                                     return 'KSH ' + context.parsed.y.toLocaleString();
@@ -444,49 +585,137 @@ if ($result) {
                         }
                     },
                     scales: {
+                        x: {
+                            grid: {
+                                display: false
+                            },
+                            ticks: {
+                                color: '#7f8c8d',
+                                font: {
+                                    size: 11
+                                }
+                            }
+                        },
                         y: {
                             beginAtZero: true,
+                            grid: {
+                                color: 'rgba(236, 240, 241, 0.5)'
+                            },
                             ticks: {
+                                color: '#7f8c8d',
+                                font: {
+                                    size: 11
+                                },
                                 callback: function(value) {
-                                    return 'KSH ' + value.toLocaleString();
+                                    if (value >= 1000) {
+                                        return 'KSH ' + (value / 1000).toFixed(0) + 'K';
+                                    }
+                                    return 'KSH ' + value;
                                 }
                             }
                         }
+                    },
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    },
+                    animation: {
+                        duration: 1000,
+                        easing: 'easeOutQuart'
                     }
                 }
             });
             
             // Category Chart
             const categoryCtx = document.getElementById('categoryChart').getContext('2d');
-            new Chart(categoryCtx, {
+            const categoryChart = new Chart(categoryCtx, {
                 type: 'doughnut',
                 data: {
                     labels: <?php echo json_encode($chart_data['category_names']); ?>,
                     datasets: [{
                         data: <?php echo json_encode($chart_data['category_sales']); ?>,
-                        backgroundColor: [
-                            '#3498db', '#27ae60', '#f39c12', '#e74c3c', '#9b59b6',
-                            '#34495e', '#1abc9c', '#d35400', '#c0392b', '#8e44ad'
-                        ],
+                        backgroundColor: chartBackgrounds,
                         borderWidth: 2,
-                        borderColor: '#fff'
+                        borderColor: '#ffffff',
+                        hoverOffset: 15,
+                        hoverBorderWidth: 3
                     }]
                 },
                 options: {
                     responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '60%',
                     plugins: {
                         legend: {
-                            position: 'bottom',
+                            position: 'right',
+                            labels: {
+                                color: colors.dark,
+                                font: {
+                                    size: 11,
+                                    family: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif"
+                                },
+                                padding: 20,
+                                boxWidth: 12,
+                                boxHeight: 12
+                            }
                         },
                         tooltip: {
+                            backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                            titleColor: colors.dark,
+                            bodyColor: colors.dark,
+                            borderColor: '#ecf0f1',
+                            borderWidth: 1,
+                            cornerRadius: 8,
+                            padding: 12,
                             callbacks: {
                                 label: function(context) {
-                                    return context.label + ': KSH ' + context.parsed.toLocaleString();
+                                    const label = context.label || '';
+                                    const value = context.raw || 0;
+                                    const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                    const percentage = Math.round((value / total) * 100);
+                                    return `${label}: KSH ${value.toLocaleString()} (${percentage}%)`;
                                 }
                             }
                         }
+                    },
+                    animation: {
+                        animateScale: true,
+                        animateRotate: true,
+                        duration: 1000,
+                        easing: 'easeOutQuart'
                     }
                 }
+            });
+            
+            // Add animation to stats cards on scroll
+            const observerOptions = {
+                threshold: 0.1,
+                rootMargin: '0px 0px -50px 0px'
+            };
+            
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        entry.target.style.opacity = '1';
+                        entry.target.style.transform = 'translateY(0)';
+                    }
+                });
+            }, observerOptions);
+            
+            // Observe stat cards
+            document.querySelectorAll('.stat-card-enhanced').forEach(card => {
+                card.style.opacity = '0';
+                card.style.transform = 'translateY(20px)';
+                card.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
+                observer.observe(card);
+            });
+            
+            // Observe chart cards
+            document.querySelectorAll('.chart-card-enhanced').forEach(card => {
+                card.style.opacity = '0';
+                card.style.transform = 'translateY(20px)';
+                card.style.transition = 'opacity 0.6s ease 0.2s, transform 0.6s ease 0.2s';
+                observer.observe(card);
             });
         });
     </script>

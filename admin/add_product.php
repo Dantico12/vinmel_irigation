@@ -777,49 +777,7 @@ if (!$period_tracking_enabled) {
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <link href="style.css" rel="stylesheet">
-    <style>
-        .admin-badge {
-            background: linear-gradient(45deg, #dc3545, #c82333);
-            color: white;
-            font-size: 0.7rem;
-            padding: 2px 6px;
-            border-radius: 10px;
-            margin-left: 5px;
-        }
-        .user-filter {
-            max-width: 200px;
-        }
-        .creator-info {
-            font-size: 0.8rem;
-            color: #6c757d;
-        }
-        .period-filter-card {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-        }
-        .sku-badge {
-            background-color: #e9ecef;
-            color: #495057;
-            font-family: 'Courier New', monospace;
-            font-size: 0.75rem;
-        }
-        .override-warning {
-            background-color: #fff3cd;
-            border-left: 4px solid #ffc107;
-        }
-        .period-status-active {
-            background-color: #28a745 !important;
-            color: white !important;
-        }
-        .period-status-open {
-            background-color: #17a2b8 !important;
-            color: white !important;
-        }
-        .period-status-locked {
-            background-color: #6c757d !important;
-            color: white !important;
-        }
-    </style>
+  
 </head>
 <body>
     <?php include 'nav_bar.php'; ?>

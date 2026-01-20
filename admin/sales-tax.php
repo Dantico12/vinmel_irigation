@@ -121,66 +121,6 @@ $transaction_trend = count($period_comparison) > 1 ?
     <title>Sales Tax Report - Vinmel Irrigation</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="style.css"> <!-- Your global CSS -->
-    <style>
-        /* Your global CSS is already included */
-        /* Additional styles specific to the tax report page */
-        
-        .tax-summary-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: var(--spacing-lg);
-            margin-bottom: var(--spacing-xl);
-        }
-        
-        .tax-breakdown {
-            background: var(--white);
-            border-radius: var(--border-radius-lg);
-            padding: var(--spacing-lg);
-            box-shadow: var(--shadow-sm);
-            margin-bottom: var(--spacing-lg);
-        }
-        
-        .tax-period-selector {
-            display: flex;
-            gap: var(--spacing-md);
-            align-items: center;
-            margin-bottom: var(--spacing-lg);
-            flex-wrap: wrap;
-        }
-        
-        .tax-rate-badge {
-            background: rgba(23, 162, 184, 0.1);
-            color: var(--info-color);
-            padding: 4px 8px;
-            border-radius: 12px;
-            font-size: 0.75rem;
-            font-weight: var(--font-weight-semibold);
-        }
-        
-        .tax-chart-container {
-            height: 300px;
-            margin-top: var(--spacing-lg);
-        }
-        
-        .tax-trend {
-            display: flex;
-            align-items: center;
-            gap: var(--spacing-xs);
-            font-size: 0.85rem;
-        }
-        
-        .empty-state {
-            text-align: center;
-            padding: var(--spacing-xl);
-            color: var(--muted-text);
-        }
-        
-        .empty-state i {
-            font-size: 3rem;
-            margin-bottom: var(--spacing-md);
-            opacity: 0.5;
-        }
-    </style>
 </head>
 <body>
     

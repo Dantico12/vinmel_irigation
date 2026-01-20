@@ -4,13 +4,31 @@ ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 
 require_once 'config.php';
+require_once 'security.php';
 
 // Check authentication
 checkAuth();
 
+// Initialize session
+initSecureSession();
+
+// Generate CSRF token
+$csrf_token = generateCSRFToken();
+
 $database = new Database();
 $db = $database->getConnection();
-$expenseObj = new Expense($db);
+
+// Get current user ID
+$user_id = $_SESSION['user_id'];
+
+// Rate limiting for form submissions
+$rateLimitKey = "expense_form_" . $user_id;
+if (!checkRateLimit($rateLimitKey, 10, 60)) {
+    $_SESSION['error_message'] = "Too many requests. Please wait a moment before trying again.";
+    securityLog("Rate limit exceeded for expense form submissions", "WARNING", $user_id);
+    header('Location: expenses.php');
+    exit();
+}
 
 // Fetch all time periods for the dropdown
 $timePeriodsSql = "SELECT id, period_name, year, month, is_active, is_locked, start_date, end_date, locked_at
@@ -41,7 +59,6 @@ if (isset($_GET['period_id']) && is_numeric($_GET['period_id'])) {
 }
 
 if (!$selected_period_id) {
-    // Try to get current active period using our new function
     $current_period = getCurrentTimePeriod($db);
     if ($current_period) {
         $selected_period_id = $current_period['id'];
@@ -50,107 +67,207 @@ if (!$selected_period_id) {
     }
 }
 
-// Handle form submissions
-$success_msg = $error_msg = '';
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_POST['add_expense'])) {
-        try {
-            $expense = new Expense($db);
-            $expense->date = $_POST['date'];
-            $expense->category = $_POST['category'];
-            $expense->description = $_POST['description'];
-            $expense->amount = (float)$_POST['amount'];
-            $expense->tax = isset($_POST['tax']) ? (float)$_POST['tax'] : 0.00;
-            $expense->fees = isset($_POST['fees']) ? (float)$_POST['fees'] : 0.00;
-            $expense->notes = $_POST['notes'] ?? '';
-            $expense->created_by = $_SESSION['user_id'];
-            $expense->time_period_id = (int)$_POST['time_period_id'];
-
-            if ($expense->time_period_id != $selected_period_id) {
-                $error_msg = "Invalid Time Period ID submitted.";
-            } else {
-                if ($expense->create()) {
-                    $success_msg = "Expense added successfully!";
-                    echo '<script>window.location.href = "expenses.php?period_id=' . $expense->time_period_id . '";</script>';
-                    exit();
-                } else {
-                    $error_msg = "Failed to add expense. Please check the data.";
-                }
-            }
-        } catch (Exception $e) {
-            $error_msg = "Database error: " . $e->getMessage();
-        }
-    }
-    
-    // Handle update expense
-    if (isset($_POST['update_expense'])) {
-        try {
-            $expense_id = (int)$_POST['expense_id'];
-            $expense = new Expense($db);
-            
-            // Check if expense exists and belongs to current period
-            $existing_expense = $expense->getExpenseById($expense_id);
-            if (!$existing_expense) {
-                $error_msg = "Expense not found.";
-            } elseif ($existing_expense['time_period_id'] != $selected_period_id) {
-                $error_msg = "Expense does not belong to the current period.";
-            } else {
-                $expense->id = $expense_id;
-                $expense->date = $_POST['date'];
-                $expense->category = $_POST['category'];
-                $expense->description = $_POST['description'];
-                $expense->amount = (float)$_POST['amount'];
-                $expense->tax = isset($_POST['tax']) ? (float)$_POST['tax'] : 0.00;
-                $expense->fees = isset($_POST['fees']) ? (float)$_POST['fees'] : 0.00;
-                $expense->notes = $_POST['notes'] ?? '';
-                
-                if ($expense->update()) {
-                    $success_msg = "Expense updated successfully!";
-                    echo '<script>window.location.href = "expenses.php?period_id=' . $selected_period_id . '";</script>';
-                    exit();
-                } else {
-                    $error_msg = "Failed to update expense. Please check the data.";
-                }
-            }
-        } catch (Exception $e) {
-            $error_msg = "Database error: " . $e->getMessage();
-        }
-    }
-    
-    // Handle delete expense
-    if (isset($_POST['delete_expense'])) {
-        try {
-            $expense_id = (int)$_POST['expense_id'];
-            $expense = new Expense($db);
-            
-            // Check if expense exists and belongs to current period
-            $existing_expense = $expense->getExpenseById($expense_id);
-            if (!$existing_expense) {
-                $error_msg = "Expense not found.";
-            } elseif ($existing_expense['time_period_id'] != $selected_period_id) {
-                $error_msg = "Expense does not belong to the current period.";
-            } else {
-                if ($expense->delete($expense_id)) {
-                    $success_msg = "Expense deleted successfully!";
-                    echo '<script>window.location.href = "expenses.php?period_id=' . $selected_period_id . '";</script>';
-                    exit();
-                } else {
-                    $error_msg = "Failed to delete expense.";
-                }
-            }
-        } catch (Exception $e) {
-            $error_msg = "Database error: " . $e->getMessage();
+// Check if selected period is locked
+$is_period_locked = false;
+if ($selected_period_id) {
+    foreach ($timePeriods as $tp) {
+        if ($tp['id'] == $selected_period_id && $tp['is_locked']) {
+            $is_period_locked = true;
+            break;
         }
     }
 }
 
-// Fetch expenses for selected period
+// Handle form submissions with CSRF protection
+$success_msg = $error_msg = '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Validate CSRF token
+    if (!isset($_POST['csrf_token']) || !validateCSRFToken($_POST['csrf_token'])) {
+        $error_msg = "Security token validation failed. Please try again.";
+        securityLog("CSRF token validation failed for expense form", "SECURITY", $user_id);
+    } else {
+        if (isset($_POST['add_expense'])) {
+            try {
+                // Validate and sanitize inputs
+                $date = sanitizeInput($_POST['date'], 'date');
+                $category = sanitizeInput($_POST['category'], 'string');
+                $description = sanitizeInput($_POST['description'], 'string');
+                $amount = (float)sanitizeInput($_POST['amount'], 'float');
+                $tax = isset($_POST['tax']) ? (float)sanitizeInput($_POST['tax'], 'float') : 0.00;
+                $fees = isset($_POST['fees']) ? (float)sanitizeInput($_POST['fees'], 'float') : 0.00;
+                $notes = sanitizeInput($_POST['notes'] ?? '', 'string');
+                $time_period_id = (int)sanitizeInput($_POST['time_period_id'], 'int');
+                
+                // Calculate net amount
+                $net_amount = $amount + $tax + $fees;
+                
+                // Validation rules
+                $validationRules = [
+                    'date' => 'required|date',
+                    'category' => 'required|min:2|max:100',
+                    'description' => 'required|min:2|max:500',
+                    'amount' => 'required|numeric|min:0.01',
+                    'tax' => 'numeric|min:0',
+                    'fees' => 'numeric|min:0'
+                ];
+                
+                $validationErrors = validateInput($_POST, $validationRules);
+                
+                if (!empty($validationErrors)) {
+                    $error_msg = implode('<br>', $validationErrors);
+                } else {
+                    // Check if period is locked (simplified check)
+                    if ($is_period_locked) {
+                        $error_msg = "This period is locked. You cannot add new expenses.";
+                    } else {
+                        // Insert expense using prepared statement with net_amount
+                        $sql = "INSERT INTO expenses (date, category, description, amount, tax, fees, net_amount, notes, created_by, time_period_id, created_at) 
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())";
+                        
+                        $stmt = prepareStatement($db, $sql, [
+                            $date, $category, $description, $amount, $tax, $fees, $net_amount, $notes, 
+                            $user_id, $time_period_id
+                        ], "sssddddssi");
+                        
+                        if ($stmt && $stmt->execute()) {
+                            $success_msg = "Expense added successfully!";
+                            securityLog("Expense created: $description - Amount: $amount", "INFO", $user_id);
+                            header('Location: expenses.php?period_id=' . $time_period_id);
+                            exit();
+                        } else {
+                            $error_msg = "Failed to add expense: " . $db->error;
+                            securityLog("Failed to create expense: " . $db->error, "ERROR", $user_id);
+                        }
+                    }
+                }
+            } catch (Exception $e) {
+                $error_msg = "Database error: " . $e->getMessage();
+                securityLog("Expense creation error: " . $e->getMessage(), "ERROR", $user_id);
+            }
+        }
+        
+        // Handle update expense
+        if (isset($_POST['update_expense'])) {
+            try {
+                $expense_id = (int)sanitizeInput($_POST['expense_id'], 'int');
+                $date = sanitizeInput($_POST['date'], 'date');
+                $category = sanitizeInput($_POST['category'], 'string');
+                $description = sanitizeInput($_POST['description'], 'string');
+                $amount = (float)sanitizeInput($_POST['amount'], 'float');
+                $tax = isset($_POST['tax']) ? (float)sanitizeInput($_POST['tax'], 'float') : 0.00;
+                $fees = isset($_POST['fees']) ? (float)sanitizeInput($_POST['fees'], 'float') : 0.00;
+                $notes = sanitizeInput($_POST['notes'] ?? '', 'string');
+                
+                // Calculate net amount
+                $net_amount = $amount + $tax + $fees;
+                
+                // Validation
+                $validationRules = [
+                    'date' => 'required|date',
+                    'category' => 'required|min:2|max:100',
+                    'description' => 'required|min:2|max:500',
+                    'amount' => 'required|numeric|min:0.01',
+                    'tax' => 'numeric|min:0',
+                    'fees' => 'numeric|min:0'
+                ];
+                
+                $validationErrors = validateInput($_POST, $validationRules);
+                
+                if (!empty($validationErrors)) {
+                    $error_msg = implode('<br>', $validationErrors);
+                } else {
+                    // Check if period is locked
+                    if ($is_period_locked) {
+                        $error_msg = "This period is locked. You cannot edit expenses.";
+                    } else {
+                        // Update expense with net_amount
+                        $sql = "UPDATE expenses SET date = ?, category = ?, description = ?, amount = ?, 
+                                tax = ?, fees = ?, net_amount = ?, notes = ?, updated_at = NOW() 
+                                WHERE id = ?";
+                        
+                        $stmt = prepareStatement($db, $sql, [
+                            $date, $category, $description, $amount, $tax, $fees, $net_amount, $notes, $expense_id
+                        ], "sssddddssi");
+                        
+                        if ($stmt && $stmt->execute()) {
+                            $success_msg = "Expense updated successfully!";
+                            securityLog("Expense updated ID: $expense_id", "INFO", $user_id);
+                            header('Location: expenses.php?period_id=' . $selected_period_id);
+                            exit();
+                        } else {
+                            $error_msg = "Failed to update expense: " . $db->error;
+                            securityLog("Failed to update expense ID: $expense_id - " . $db->error, "ERROR", $user_id);
+                        }
+                    }
+                }
+            } catch (Exception $e) {
+                $error_msg = "Database error: " . $e->getMessage();
+                securityLog("Expense update error: " . $e->getMessage(), "ERROR", $user_id);
+            }
+        }
+        
+        // Handle delete expense
+        if (isset($_POST['delete_expense'])) {
+            try {
+                $expense_id = (int)sanitizeInput($_POST['expense_id'], 'int');
+                
+                if (!validateInt($expense_id, 1)) {
+                    $error_msg = "Invalid expense ID";
+                } else {
+                    // Check if period is locked
+                    if ($is_period_locked) {
+                        $error_msg = "This period is locked. You cannot delete expenses.";
+                    } else {
+                        $sql = "DELETE FROM expenses WHERE id = ?";
+                        $stmt = prepareStatement($db, $sql, [$expense_id], "i");
+                        
+                        if ($stmt && $stmt->execute()) {
+                            $success_msg = "Expense deleted successfully!";
+                            securityLog("Expense deleted ID: $expense_id", "INFO", $user_id);
+                            header('Location: expenses.php?period_id=' . $selected_period_id);
+                            exit();
+                        } else {
+                            $error_msg = "Failed to delete expense: " . $db->error;
+                            securityLog("Failed to delete expense ID: $expense_id - " . $db->error, "ERROR", $user_id);
+                        }
+                    }
+                }
+            } catch (Exception $e) {
+                $error_msg = "Database error: " . $e->getMessage();
+                securityLog("Expense deletion error: " . $e->getMessage(), "ERROR", $user_id);
+            }
+        }
+    }
+}
+
+// Fetch expenses for selected period with user information
 $expenses = [];
 if ($selected_period_id) {
-    $result = $expenseObj->readByTimePeriod($selected_period_id);
-    if ($result) {
-        while ($row = $result->fetch_assoc()) {
-            $expenses[] = $row;
+    $sql = "SELECT e.*, u.name as created_by_name 
+            FROM expenses e 
+            LEFT JOIN users u ON e.created_by = u.id 
+            WHERE e.time_period_id = ? 
+            ORDER BY e.date DESC, e.created_at DESC";
+    
+    $stmt = prepareStatement($db, $sql, [$selected_period_id], "i");
+    
+    if ($stmt) {
+        $stmt->execute();
+        $result = $stmt->get_result();
+        
+        if ($result && $result->num_rows > 0) {
+            while ($row = $result->fetch_assoc()) {
+                // Sanitize data for display
+                $row['category'] = sanitizeInput($row['category'], 'string');
+                $row['description'] = sanitizeInput($row['description'], 'string');
+                $row['notes'] = sanitizeInput($row['notes'], 'string');
+                $row['created_by_name'] = sanitizeInput($row['created_by_name'] ?? 'Unknown', 'string');
+                // Calculate net amount if not in database
+                if (!isset($row['net_amount']) || empty($row['net_amount'])) {
+                    $row['net_amount'] = $row['amount'] + $row['tax'] + $row['fees'];
+                }
+                $expenses[] = $row;
+            }
         }
     }
 }
@@ -168,8 +285,6 @@ foreach ($timePeriods as $tp) {
 
 // Get current period info for display
 $current_period = getCurrentTimePeriod($db);
-include 'header.php';
-include 'nav_bar.php';
 ?>
 
 <!DOCTYPE html>
@@ -187,120 +302,11 @@ include 'nav_bar.php';
     
     <!-- Global CSS -->
     <link rel="stylesheet" href="style.css">
-    
-    <style>
-        .action-buttons {
-            display: flex;
-            gap: 5px;
-            justify-content: center;
-        }
-        .action-buttons .btn {
-            padding: 0.25rem 0.5rem;
-            font-size: 0.875rem;
-        }
-        .expense-actions {
-            text-align: center;
-        }
-        .custom-tooltip {
-            position: absolute;
-            background: #333;
-            color: white;
-            padding: 5px 10px;
-            border-radius: 4px;
-            font-size: 12px;
-            z-index: 1000;
-            max-width: 300px;
-            word-wrap: break-word;
-        }
-        .modal {
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-            z-index: 1050;
-            max-width: 600px;
-            width: 90%;
-            max-height: 90vh;
-            overflow-y: auto;
-            display: none;
-        }
-        .modal.show {
-            display: block;
-        }
-        .modal-backdrop {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.5);
-            z-index: 1040;
-            display: none;
-        }
-        .modal-backdrop.show {
-            display: block;
-        }
-        .modal-header {
-            padding: 1rem 1.5rem;
-            border-bottom: 1px solid #dee2e6;
-            display: flex;
-            justify-content: between;
-            align-items: center;
-        }
-        .modal-title {
-            margin: 0;
-            font-size: 1.25rem;
-        }
-        .modal-close {
-            background: none;
-            border: none;
-            font-size: 1.5rem;
-            cursor: pointer;
-            color: #6c757d;
-        }
-        .modal-body {
-            padding: 1.5rem;
-        }
-        .modal-footer {
-            padding: 1rem 1.5rem;
-            border-top: 1px solid #dee2e6;
-            display: flex;
-            justify-content: flex-end;
-            gap: 0.5rem;
-        }
-        .form-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 1rem;
-        }
-        @media (max-width: 768px) {
-            .form-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-        
-        /* Current Period Info Styles */
-        .current-period-info {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border-radius: 10px;
-            padding: 1.5rem;
-            margin-bottom: 2rem;
-        }
-        .current-period-info h5 {
-            color: white;
-            margin-bottom: 0.5rem;
-        }
-        .current-period-info .badge {
-            font-size: 0.8rem;
-            padding: 0.4rem 0.8rem;
-        }
-    </style>
 </head>
 <body>
+    <?php include 'header.php'; ?>
+    <?php include 'nav_bar.php'; ?>
+    
     <!-- Main Content Wrapper -->
     <div class="main-content">
         <div class="content-area">
@@ -399,7 +405,7 @@ include 'nav_bar.php';
                                 </div>
                                 <div class="filter-item">
                                     <?php if ($selected_period_id): ?>
-                                        <button type="button" class="btn btn-primary" onclick="openAddExpenseModal()" <?php echo ($selected_period_details && $selected_period_details['is_locked']) ? 'disabled' : ''; ?>>
+                                        <button type="button" class="btn btn-primary" onclick="openAddExpenseModal()" <?php echo $is_period_locked ? 'disabled' : ''; ?>>
                                             <i class="fas fa-plus me-2"></i> Add New Expense
                                         </button>
                                     <?php endif; ?>
@@ -457,7 +463,7 @@ include 'nav_bar.php';
                 $total_amount = array_sum(array_column($expenses, 'amount'));
                 $total_tax = array_sum(array_column($expenses, 'tax'));
                 $total_fees = array_sum(array_column($expenses, 'fees'));
-                $total_net = $total_amount + $total_tax + $total_fees;
+                $total_net = array_sum(array_column($expenses, 'net_amount'));
                 ?>
                 <section class="summary-section">
                     <div class="stats-grid">
@@ -504,15 +510,18 @@ include 'nav_bar.php';
                 <!-- Expenses Table Section -->
                 <section class="expenses-table-section">
                     <div class="dashboard-card">
-                        <div class="card-header">
+                        <div class="card-header d-flex justify-content-between align-items-center">
                             <h5 class="card-title">
                                 <i class="fas fa-list me-2"></i>
                                 Expenses List
                             </h5>
+                            <div class="search-filter">
+                                <input type="text" id="searchExpenses" class="form-control search-expenses" placeholder="Search expenses...">
+                            </div>
                         </div>
                         <div class="card-body p-0">
                             <div class="table-container">
-                                <table class="data-table">
+                                <table class="data-table" id="expensesTable">
                                     <thead>
                                         <tr>
                                             <th>Date</th>
@@ -530,9 +539,10 @@ include 'nav_bar.php';
                                     <tbody>
                                         <?php if (!empty($expenses)): ?>
                                             <?php foreach ($expenses as $exp): 
-                                                $net_amount = $exp['amount'] + $exp['tax'] + $exp['fees'];
+                                                // Use net_amount from database or calculate it
+                                                $net_amount = $exp['net_amount'] ?? ($exp['amount'] + $exp['tax'] + $exp['fees']);
                                             ?>
-                                                <tr class="expense-row">
+                                                <tr class="expense-row" data-search="<?= strtolower(htmlspecialchars($exp['description'] . ' ' . $exp['category'] . ' ' . $exp['notes'])) ?>">
                                                     <td class="expense-date">
                                                         <i class="fas fa-calendar text-muted me-2"></i>
                                                         <?= htmlspecialchars($exp['date']) ?>
@@ -547,7 +557,7 @@ include 'nav_bar.php';
                                                     <td class="expense-net text-right fw-bold">KSH <?= number_format($net_amount, 2) ?></td>
                                                     <td class="expense-notes">
                                                         <?php if (!empty($exp['notes'])): ?>
-                                                            <span class="notes-tooltip" title="<?= htmlspecialchars($exp['notes']) ?>">
+                                                            <span class="notes-tooltip" data-toggle="tooltip" title="<?= htmlspecialchars($exp['notes']) ?>">
                                                                 <i class="fas fa-sticky-note text-info"></i>
                                                             </span>
                                                         <?php else: ?>
@@ -555,19 +565,19 @@ include 'nav_bar.php';
                                                         <?php endif; ?>
                                                     </td>
                                                     <td class="expense-created-by">
-                                                        <small class="text-muted"><?= htmlspecialchars($exp['created_by_name'] ?? 'N/A') ?></small>
+                                                        <small class="text-muted"><?= htmlspecialchars($exp['created_by_name']) ?></small>
                                                     </td>
                                                     <td class="expense-actions">
                                                         <div class="action-buttons">
                                                             <button type="button" class="btn btn-sm btn-outline-primary" 
                                                                     onclick="openEditExpenseModal(<?= $exp['id'] ?>, '<?= $exp['date'] ?>', '<?= $exp['category'] ?>', '<?= htmlspecialchars(addslashes($exp['description'])) ?>', <?= $exp['amount'] ?>, <?= $exp['tax'] ?>, <?= $exp['fees'] ?>, '<?= htmlspecialchars(addslashes($exp['notes'])) ?>')"
-                                                                    <?php echo ($selected_period_details && $selected_period_details['is_locked']) ? 'disabled' : ''; ?>
+                                                                    <?php echo $is_period_locked ? 'disabled' : ''; ?>
                                                                     title="Edit Expense">
                                                                 <i class="fas fa-edit"></i>
                                                             </button>
                                                             <button type="button" class="btn btn-sm btn-outline-danger" 
                                                                     onclick="openDeleteExpenseModal(<?= $exp['id'] ?>, '<?= htmlspecialchars(addslashes($exp['description'])) ?>')"
-                                                                    <?php echo ($selected_period_details && $selected_period_details['is_locked']) ? 'disabled' : ''; ?>
+                                                                    <?php echo $is_period_locked ? 'disabled' : ''; ?>
                                                                     title="Delete Expense">
                                                                 <i class="fas fa-trash"></i>
                                                             </button>
@@ -584,13 +594,13 @@ include 'nav_bar.php';
                                                         <?php if ($selected_period_id): ?>
                                                             <p class="text-muted mb-3">
                                                                 No expenses recorded for <strong><?= htmlspecialchars($selected_period_name) ?></strong>.
-                                                                <?php if ($selected_period_details && $selected_period_details['is_locked']): ?>
+                                                                <?php if ($is_period_locked): ?>
                                                                     <span class="text-warning d-block mt-2">
                                                                         <i class="fas fa-lock me-1"></i> This period is locked. No new entries can be added.
                                                                     </span>
                                                                 <?php endif; ?>
                                                             </p>
-                                                            <?php if (!$selected_period_details || !$selected_period_details['is_locked']): ?>
+                                                            <?php if (!$is_period_locked): ?>
                                                                 <button type="button" class="btn btn-primary" onclick="openAddExpenseModal()">
                                                                     <i class="fas fa-plus me-2"></i> Add Your First Expense
                                                                 </button>
@@ -613,8 +623,7 @@ include 'nav_bar.php';
     </div>
 
     <!-- Add Expense Modal -->
-    <div class="modal-backdrop" id="expenseModalBackdrop" style="display: none;"></div>
-    <div class="modal" id="addExpenseModal" style="display: none;">
+    <div class="modal" id="addExpenseModal">
         <div class="modal-header">
             <h5 class="modal-title">
                 <i class="fas fa-plus-circle me-2"></i>
@@ -624,12 +633,13 @@ include 'nav_bar.php';
                 <i class="fas fa-times"></i>
             </button>
         </div>
-        <form method="POST" class="expense-form" id="expenseForm">
+        <form method="POST" class="expense-form" id="expenseForm" onsubmit="return validateExpenseForm()">
+            <input type="hidden" name="csrf_token" value="<?= $csrf_token ?>">
             <input type="hidden" name="add_expense" value="1">
             <input type="hidden" name="time_period_id" value="<?= $selected_period_id ?>">
 
             <div class="modal-body">
-                <?php if ($selected_period_details && $selected_period_details['is_locked']): ?>
+                <?php if ($is_period_locked): ?>
                     <div class="alert alert-warning">
                         <i class="fas fa-lock me-2"></i> 
                         The selected period (<strong><?= htmlspecialchars($selected_period_name) ?></strong>) is locked. You cannot add new expenses.
@@ -637,11 +647,11 @@ include 'nav_bar.php';
                 <?php else: ?>
                     <div class="form-grid">
                         <div class="form-group">
-                            <label class="form-label">Date</label>
-                            <input type="date" name="date" class="form-control" required value="<?= date('Y-m-d') ?>" id="expenseDate">
+                            <label class="form-label">Date *</label>
+                            <input type="date" name="date" class="form-control" required value="<?= date('Y-m-d') ?>" id="expenseDate" max="<?= date('Y-m-d') ?>">
                         </div>
                         <div class="form-group">
-                            <label class="form-label">Category</label>
+                            <label class="form-label">Category *</label>
                             <select name="category" class="form-select" required id="expenseCategory">
                                 <option value="">Select Category</option>
                                 <option value="WAGES">WAGES</option>
@@ -650,7 +660,7 @@ include 'nav_bar.php';
                                 <option value="INTERNET">INTERNET</option>
                                 <option value="WATER BILL">WATER BILL</option>
                                 <option value="ELECTRICITY BILL">ELECTRICITY BILL</option>
-                                <option value="PROFESSINAL SERVICES">PROFESSINAL SERVICES</option>
+                                <option value="PROFESSIONAL SERVICES">PROFESSIONAL SERVICES</option>
                                 <option value="LEVIS/PERMITS/OTHERS">LEVIS/PERMITS/OTHERS</option>
                                 <option value="ADVERTISMENT">ADVERTISMENT</option>
                                 <option value="TRANSPORT CHARGES">TRANSPORT CHARGES</option>
@@ -669,14 +679,14 @@ include 'nav_bar.php';
                     </div>
 
                     <div class="form-group">
-                        <label class="form-label">Description</label>
-                        <input type="text" name="description" class="form-control" placeholder="e.g., January Rent" required id="expenseDescription">
+                        <label class="form-label">Description *</label>
+                        <input type="text" name="description" class="form-control" placeholder="e.g., January Rent" required id="expenseDescription" maxlength="500">
                     </div>
 
                     <div class="form-grid">
                         <div class="form-group">
-                            <label class="form-label">Amount (KSH)</label>
-                            <input type="number" step="0.01" name="amount" class="form-control" placeholder="0.00" required min="0" id="expenseAmount">
+                            <label class="form-label">Amount (KSH) *</label>
+                            <input type="number" step="0.01" name="amount" class="form-control" placeholder="0.00" required min="0.01" id="expenseAmount">
                         </div>
                         <div class="form-group">
                             <label class="form-label">Tax (KSH)</label>
@@ -688,15 +698,20 @@ include 'nav_bar.php';
                         </div>
                     </div>
 
+                    <div class="form-group net-amount-group">
+                        <label class="form-label">Net Amount (KSH)</label>
+                        <div class="net-amount-display" id="netAmountDisplay">KSH 0.00</div>
+                    </div>
+
                     <div class="form-group">
                         <label class="form-label">Notes (Optional)</label>
-                        <textarea name="notes" class="form-control" rows="3" placeholder="Add any additional notes..." id="expenseNotes"></textarea>
+                        <textarea name="notes" class="form-control" rows="3" placeholder="Add any additional notes..." id="expenseNotes" maxlength="1000"></textarea>
                     </div>
                 <?php endif; ?>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-outline-secondary" onclick="closeAddExpenseModal()">Cancel</button>
-                <?php if (!$selected_period_details || !$selected_period_details['is_locked']): ?>
+                <?php if (!$is_period_locked): ?>
                     <button type="submit" class="btn btn-primary" id="submitExpense">
                         <i class="fas fa-save me-2"></i> Save Expense
                     </button>
@@ -710,7 +725,7 @@ include 'nav_bar.php';
     </div>
 
     <!-- Edit Expense Modal -->
-    <div class="modal" id="editExpenseModal" style="display: none;">
+    <div class="modal" id="editExpenseModal">
         <div class="modal-header">
             <h5 class="modal-title">
                 <i class="fas fa-edit me-2"></i>
@@ -720,13 +735,14 @@ include 'nav_bar.php';
                 <i class="fas fa-times"></i>
             </button>
         </div>
-        <form method="POST" class="expense-form" id="editExpenseForm">
+        <form method="POST" class="expense-form" id="editExpenseForm" onsubmit="return validateEditExpenseForm()">
+            <input type="hidden" name="csrf_token" value="<?= $csrf_token ?>">
             <input type="hidden" name="update_expense" value="1">
             <input type="hidden" name="expense_id" id="editExpenseId">
             <input type="hidden" name="time_period_id" value="<?= $selected_period_id ?>">
 
             <div class="modal-body">
-                <?php if ($selected_period_details && $selected_period_details['is_locked']): ?>
+                <?php if ($is_period_locked): ?>
                     <div class="alert alert-warning">
                         <i class="fas fa-lock me-2"></i> 
                         The selected period (<strong><?= htmlspecialchars($selected_period_name) ?></strong>) is locked. You cannot edit expenses.
@@ -734,11 +750,11 @@ include 'nav_bar.php';
                 <?php else: ?>
                     <div class="form-grid">
                         <div class="form-group">
-                            <label class="form-label">Date</label>
-                            <input type="date" name="date" class="form-control" required id="editExpenseDate">
+                            <label class="form-label">Date *</label>
+                            <input type="date" name="date" class="form-control" required id="editExpenseDate" max="<?= date('Y-m-d') ?>">
                         </div>
                         <div class="form-group">
-                            <label class="form-label">Category</label>
+                            <label class="form-label">Category *</label>
                             <select name="category" class="form-select" required id="editExpenseCategory">
                                 <option value="">Select Category</option>
                                 <option value="WAGES">WAGES</option>
@@ -747,7 +763,7 @@ include 'nav_bar.php';
                                 <option value="INTERNET">INTERNET</option>
                                 <option value="WATER BILL">WATER BILL</option>
                                 <option value="ELECTRICITY BILL">ELECTRICITY BILL</option>
-                                <option value="PROFESSINAL SERVICES">PROFESSINAL SERVICES</option>
+                                <option value="PROFESSIONAL SERVICES">PROFESSIONAL SERVICES</option>
                                 <option value="LEVIS/PERMITS/OTHERS">LEVIS/PERMITS/OTHERS</option>
                                 <option value="ADVERTISMENT">ADVERTISMENT</option>
                                 <option value="TRANSPORT CHARGES">TRANSPORT CHARGES</option>
@@ -766,14 +782,14 @@ include 'nav_bar.php';
                     </div>
 
                     <div class="form-group">
-                        <label class="form-label">Description</label>
-                        <input type="text" name="description" class="form-control" placeholder="e.g., January Rent" required id="editExpenseDescription">
+                        <label class="form-label">Description *</label>
+                        <input type="text" name="description" class="form-control" placeholder="e.g., January Rent" required id="editExpenseDescription" maxlength="500">
                     </div>
 
                     <div class="form-grid">
                         <div class="form-group">
-                            <label class="form-label">Amount (KSH)</label>
-                            <input type="number" step="0.01" name="amount" class="form-control" placeholder="0.00" required min="0" id="editExpenseAmount">
+                            <label class="form-label">Amount (KSH) *</label>
+                            <input type="number" step="0.01" name="amount" class="form-control" placeholder="0.00" required min="0.01" id="editExpenseAmount">
                         </div>
                         <div class="form-group">
                             <label class="form-label">Tax (KSH)</label>
@@ -785,15 +801,20 @@ include 'nav_bar.php';
                         </div>
                     </div>
 
+                    <div class="form-group net-amount-group">
+                        <label class="form-label">Net Amount (KSH)</label>
+                        <div class="net-amount-display" id="editNetAmountDisplay">KSH 0.00</div>
+                    </div>
+
                     <div class="form-group">
                         <label class="form-label">Notes (Optional)</label>
-                        <textarea name="notes" class="form-control" rows="3" placeholder="Add any additional notes..." id="editExpenseNotes"></textarea>
+                        <textarea name="notes" class="form-control" rows="3" placeholder="Add any additional notes..." id="editExpenseNotes" maxlength="1000"></textarea>
                     </div>
                 <?php endif; ?>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-outline-secondary" onclick="closeEditExpenseModal()">Cancel</button>
-                <?php if (!$selected_period_details || !$selected_period_details['is_locked']): ?>
+                <?php if (!$is_period_locked): ?>
                     <button type="submit" class="btn btn-primary" id="updateExpense">
                         <i class="fas fa-save me-2"></i> Update Expense
                     </button>
@@ -807,7 +828,7 @@ include 'nav_bar.php';
     </div>
 
     <!-- Delete Expense Modal -->
-    <div class="modal" id="deleteExpenseModal" style="display: none;">
+    <div class="modal" id="deleteExpenseModal">
         <div class="modal-header">
             <h5 class="modal-title">
                 <i class="fas fa-trash-alt me-2"></i>
@@ -818,12 +839,13 @@ include 'nav_bar.php';
             </button>
         </div>
         <form method="POST" class="expense-form" id="deleteExpenseForm">
+            <input type="hidden" name="csrf_token" value="<?= $csrf_token ?>">
             <input type="hidden" name="delete_expense" value="1">
             <input type="hidden" name="expense_id" id="deleteExpenseId">
             <input type="hidden" name="time_period_id" value="<?= $selected_period_id ?>">
 
             <div class="modal-body">
-                <?php if ($selected_period_details && $selected_period_details['is_locked']): ?>
+                <?php if ($is_period_locked): ?>
                     <div class="alert alert-warning">
                         <i class="fas fa-lock me-2"></i> 
                         The selected period (<strong><?= htmlspecialchars($selected_period_name) ?></strong>) is locked. You cannot delete expenses.
@@ -841,7 +863,7 @@ include 'nav_bar.php';
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-outline-secondary" onclick="closeDeleteExpenseModal()">Cancel</button>
-                <?php if (!$selected_period_details || !$selected_period_details['is_locked']): ?>
+                <?php if (!$is_period_locked): ?>
                     <button type="submit" class="btn btn-danger" id="confirmDelete">
                         <i class="fas fa-trash me-2"></i> Delete Expense
                     </button>
@@ -854,28 +876,45 @@ include 'nav_bar.php';
         </form>
     </div>
 
-    <script>
-    // Modal management functions
-    function openAddExpenseModal() {
-        console.log('Opening add modal...');
-        document.getElementById('addExpenseModal').style.display = 'block';
-        document.getElementById('addExpenseModal').classList.add('show');
-        document.getElementById('expenseModalBackdrop').style.display = 'block';
-        document.getElementById('expenseModalBackdrop').classList.add('show');
-        document.body.style.overflow = 'hidden';
-        
-        // Reset form and set today's date
-        document.getElementById('expenseForm').reset();
-        document.getElementById('expenseDate').value = new Date().toISOString().split('T')[0];
-    }
+    <!-- Modal Backdrop -->
+    <div class="modal-backdrop" id="globalModalBackdrop" onclick="closeAllModals()"></div>
 
-    function closeAddExpenseModal() {
-        console.log('Closing add modal...');
-        document.getElementById('addExpenseModal').style.display = 'none';
-        document.getElementById('addExpenseModal').classList.remove('show');
-        document.getElementById('expenseModalBackdrop').style.display = 'none';
-        document.getElementById('expenseModalBackdrop').classList.remove('show');
-        document.body.style.overflow = '';
+    <!-- JavaScript -->
+    <script>
+    // Simple modal management system
+    const modals = {
+        add: document.getElementById('addExpenseModal'),
+        edit: document.getElementById('editExpenseModal'),
+        delete: document.getElementById('deleteExpenseModal'),
+        backdrop: document.getElementById('globalModalBackdrop')
+    };
+
+    // Open modal functions
+    function openAddExpenseModal() {
+        console.log('Opening add expense modal...');
+        
+        // Reset form
+        const form = document.getElementById('expenseForm');
+        if (form) form.reset();
+        
+        // Set today's date
+        const dateInput = document.getElementById('expenseDate');
+        if (dateInput) {
+            dateInput.value = new Date().toISOString().split('T')[0];
+        }
+        
+        // Show modal and backdrop
+        if (modals.add && modals.backdrop) {
+            modals.add.classList.add('show');
+            modals.backdrop.classList.add('show');
+            document.body.classList.add('modal-open');
+            
+            // Update net amount display
+            updateNetAmount();
+        } else {
+            console.error('Modal elements not found');
+            alert('Modal elements not found. Please check the console for errors.');
+        }
     }
 
     function openEditExpenseModal(id, date, category, description, amount, tax, fees, notes) {
@@ -892,20 +931,14 @@ include 'nav_bar.php';
         document.getElementById('editExpenseNotes').value = notes;
         
         // Show modal
-        document.getElementById('editExpenseModal').style.display = 'block';
-        document.getElementById('editExpenseModal').classList.add('show');
-        document.getElementById('expenseModalBackdrop').style.display = 'block';
-        document.getElementById('expenseModalBackdrop').classList.add('show');
-        document.body.style.overflow = 'hidden';
-    }
-
-    function closeEditExpenseModal() {
-        console.log('Closing edit modal...');
-        document.getElementById('editExpenseModal').style.display = 'none';
-        document.getElementById('editExpenseModal').classList.remove('show');
-        document.getElementById('expenseModalBackdrop').style.display = 'none';
-        document.getElementById('expenseModalBackdrop').classList.remove('show');
-        document.body.style.overflow = '';
+        if (modals.edit && modals.backdrop) {
+            modals.edit.classList.add('show');
+            modals.backdrop.classList.add('show');
+            document.body.classList.add('modal-open');
+            
+            // Update net amount display
+            updateEditNetAmount();
+        }
     }
 
     function openDeleteExpenseModal(id, description) {
@@ -916,174 +949,184 @@ include 'nav_bar.php';
         document.getElementById('deleteExpenseDescription').textContent = description;
         
         // Show modal
-        document.getElementById('deleteExpenseModal').style.display = 'block';
-        document.getElementById('deleteExpenseModal').classList.add('show');
-        document.getElementById('expenseModalBackdrop').style.display = 'block';
-        document.getElementById('expenseModalBackdrop').classList.add('show');
-        document.body.style.overflow = 'hidden';
+        if (modals.delete && modals.backdrop) {
+            modals.delete.classList.add('show');
+            modals.backdrop.classList.add('show');
+            document.body.classList.add('modal-open');
+        }
+    }
+
+    // Close modal functions
+    function closeAllModals() {
+        console.log('Closing all modals...');
+        
+        if (modals.add) modals.add.classList.remove('show');
+        if (modals.edit) modals.edit.classList.remove('show');
+        if (modals.delete) modals.delete.classList.remove('show');
+        if (modals.backdrop) modals.backdrop.classList.remove('show');
+        document.body.classList.remove('modal-open');
+    }
+
+    function closeAddExpenseModal() {
+        if (modals.add) modals.add.classList.remove('show');
+        if (modals.backdrop) modals.backdrop.classList.remove('show');
+        document.body.classList.remove('modal-open');
+    }
+
+    function closeEditExpenseModal() {
+        if (modals.edit) modals.edit.classList.remove('show');
+        if (modals.backdrop) modals.backdrop.classList.remove('show');
+        document.body.classList.remove('modal-open');
     }
 
     function closeDeleteExpenseModal() {
-        console.log('Closing delete modal...');
-        document.getElementById('deleteExpenseModal').style.display = 'none';
-        document.getElementById('deleteExpenseModal').classList.remove('show');
-        document.getElementById('expenseModalBackdrop').style.display = 'none';
-        document.getElementById('expenseModalBackdrop').classList.remove('show');
-        document.body.style.overflow = '';
+        if (modals.delete) modals.delete.classList.remove('show');
+        if (modals.backdrop) modals.backdrop.classList.remove('show');
+        document.body.classList.remove('modal-open');
     }
 
-    // Form validation and utility functions
-    function validateExpenseForm(formId) {
-        const form = document.getElementById(formId);
-        const amountInput = form.querySelector('input[name="amount"]');
-        const amount = parseFloat(amountInput.value);
+    // Net amount calculation
+    function updateNetAmount() {
+        const amount = parseFloat(document.getElementById('expenseAmount').value) || 0;
+        const tax = parseFloat(document.getElementById('expenseTax').value) || 0;
+        const fees = parseFloat(document.getElementById('expenseFees').value) || 0;
+        const netAmount = amount + tax + fees;
         
-        if (amount === 0 || isNaN(amount)) {
-            showAlert('Please enter a valid amount greater than 0', 'warning');
-            amountInput.focus();
+        const display = document.getElementById('netAmountDisplay');
+        if (display) {
+            display.textContent = 'KSH ' + netAmount.toFixed(2);
+        }
+    }
+
+    function updateEditNetAmount() {
+        const amount = parseFloat(document.getElementById('editExpenseAmount').value) || 0;
+        const tax = parseFloat(document.getElementById('editExpenseTax').value) || 0;
+        const fees = parseFloat(document.getElementById('editExpenseFees').value) || 0;
+        const netAmount = amount + tax + fees;
+        
+        const display = document.getElementById('editNetAmountDisplay');
+        if (display) {
+            display.textContent = 'KSH ' + netAmount.toFixed(2);
+        }
+    }
+
+    // Form validation
+    function validateExpenseForm() {
+        const amount = parseFloat(document.getElementById('expenseAmount').value) || 0;
+        const description = document.getElementById('expenseDescription').value.trim();
+        
+        if (amount <= 0) {
+            alert('Please enter a valid amount greater than 0');
+            document.getElementById('expenseAmount').focus();
             return false;
         }
         
-        if (amount < 0) {
-            showAlert('Amount cannot be negative', 'warning');
-            amountInput.focus();
+        if (!description) {
+            alert('Please enter a description');
+            document.getElementById('expenseDescription').focus();
             return false;
+        }
+        
+        // Show loading state
+        const submitBtn = document.getElementById('submitExpense');
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i> Saving...';
         }
         
         return true;
     }
 
-    function showAlert(message, type = 'info') {
-        // Remove any existing custom alerts
-        const existingAlert = document.querySelector('.custom-alert');
-        if (existingAlert) {
-            existingAlert.remove();
+    function validateEditExpenseForm() {
+        const amount = parseFloat(document.getElementById('editExpenseAmount').value) || 0;
+        const description = document.getElementById('editExpenseDescription').value.trim();
+        
+        if (amount <= 0) {
+            alert('Please enter a valid amount greater than 0');
+            document.getElementById('editExpenseAmount').focus();
+            return false;
         }
         
-        const alert = document.createElement('div');
-        alert.className = `custom-alert alert alert-${type} alert-dismissible fade show`;
-        alert.style.cssText = `
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            z-index: 9999;
-            min-width: 300px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        `;
-        alert.innerHTML = `
-            ${message}
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-        `;
+        if (!description) {
+            alert('Please enter a description');
+            document.getElementById('editExpenseDescription').focus();
+            return false;
+        }
         
-        document.body.appendChild(alert);
+        const submitBtn = document.getElementById('updateExpense');
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i> Updating...';
+        }
         
-        // Auto remove after 5 seconds
-        setTimeout(() => {
-            if (alert.parentNode) {
-                alert.remove();
-            }
-        }, 5000);
+        return true;
     }
 
-    function formatCurrency(input) {
-        // Remove any existing formatting
-        let value = input.value.replace(/[^\d.]/g, '');
-        
-        // Ensure only two decimal places
-        if (value.includes('.')) {
-            const parts = value.split('.');
-            value = parts[0] + '.' + parts[1].slice(0, 2);
-        }
-        
-        // Format with commas
-        const number = parseFloat(value);
-        if (!isNaN(number)) {
-            input.value = number.toLocaleString('en-KE', {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2
-            });
-        }
-    }
-
-    function setupCurrencyFormatting() {
-        const currencyInputs = document.querySelectorAll('input[name="amount"], input[name="tax"], input[name="fees"]');
-        
-        currencyInputs.forEach(input => {
-            // Format on blur
-            input.addEventListener('blur', function() {
-                formatCurrency(this);
-            });
-            
-            // Remove formatting on focus for easy editing
-            input.addEventListener('focus', function() {
-                this.value = this.value.replace(/[^\d.]/g, '');
-            });
-            
-            // Prevent non-numeric input
-            input.addEventListener('keypress', function(e) {
-                const charCode = e.which ? e.which : e.keyCode;
-                if (charCode === 46) { // Allow decimal point
-                    if (this.value.includes('.')) {
-                        e.preventDefault();
+    // Search functionality
+    document.addEventListener('DOMContentLoaded', function() {
+        const searchInput = document.getElementById('searchExpenses');
+        if (searchInput) {
+            searchInput.addEventListener('input', function(e) {
+                const searchTerm = this.value.toLowerCase();
+                const rows = document.querySelectorAll('#expensesTable tbody tr');
+                
+                rows.forEach(row => {
+                    const rowText = row.textContent.toLowerCase();
+                    if (rowText.includes(searchTerm)) {
+                        row.style.display = '';
+                    } else {
+                        row.style.display = 'none';
                     }
-                    return;
-                }
-                if (charCode > 31 && (charCode < 48 || charCode > 57)) {
-                    e.preventDefault();
-                }
-            });
-        });
-    }
-
-    function calculateNetAmount() {
-        const amountInputs = document.querySelectorAll('input[name="amount"], input[name="tax"], input[name="fees"]');
-        const netDisplay = document.querySelector('.net-amount-display');
-        
-        if (!netDisplay) return;
-        
-        function updateNetAmount() {
-            let total = 0;
-            amountInputs.forEach(input => {
-                const value = parseFloat(input.value.replace(/[^\d.]/g, '')) || 0;
-                total += value;
-            });
-            
-            netDisplay.textContent = 'KSH ' + total.toLocaleString('en-KE', {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2
+                });
             });
         }
         
-        amountInputs.forEach(input => {
-            input.addEventListener('input', updateNetAmount);
-            input.addEventListener('blur', updateNetAmount);
+        // Setup amount calculation listeners
+        const amountInputs = ['expenseAmount', 'expenseTax', 'expenseFees'];
+        amountInputs.forEach(id => {
+            const input = document.getElementById(id);
+            if (input) {
+                input.addEventListener('input', updateNetAmount);
+            }
         });
         
-        // Initial calculation
-        updateNetAmount();
-    }
-
-    function setupTooltips() {
-        const notesTooltips = document.querySelectorAll('.notes-tooltip');
+        const editAmountInputs = ['editExpenseAmount', 'editExpenseTax', 'editExpenseFees'];
+        editAmountInputs.forEach(id => {
+            const input = document.getElementById(id);
+            if (input) {
+                input.addEventListener('input', updateEditNetAmount);
+            }
+        });
         
-        notesTooltips.forEach(tooltip => {
+        // Close modals with Escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeAllModals();
+            }
+        });
+        
+        // Debug: Log modal elements
+        console.log('Modal elements loaded:');
+        console.log('- Add modal:', modals.add ? 'Found ✓' : 'Not found ✗');
+        console.log('- Edit modal:', modals.edit ? 'Found ✓' : 'Not found ✗');
+        console.log('- Delete modal:', modals.delete ? 'Found ✓' : 'Not found ✗');
+        console.log('- Backdrop:', modals.backdrop ? 'Found ✓' : 'Not found ✗');
+    });
+
+    // Tooltip functionality
+    document.addEventListener('DOMContentLoaded', function() {
+        const tooltips = document.querySelectorAll('.notes-tooltip');
+        tooltips.forEach(tooltip => {
             tooltip.addEventListener('mouseenter', function(e) {
                 const title = this.getAttribute('title');
                 if (title) {
-                    // Remove any existing tooltip
-                    const existingTooltip = document.querySelector('.custom-tooltip');
-                    if (existingTooltip) {
-                        existingTooltip.remove();
-                    }
-                    
                     const tooltipEl = document.createElement('div');
                     tooltipEl.className = 'custom-tooltip';
                     tooltipEl.textContent = title;
                     document.body.appendChild(tooltipEl);
                     
-                    const rect = this.getBoundingClientRect();
-                    tooltipEl.style.left = (rect.left + window.scrollX) + 'px';
-                    tooltipEl.style.top = (rect.top + window.scrollY - tooltipEl.offsetHeight - 10) + 'px';
+                    tooltipEl.style.left = (e.pageX + 10) + 'px';
+                    tooltipEl.style.top = (e.pageY - tooltipEl.offsetHeight - 10) + 'px';
                     
                     this._tooltip = tooltipEl;
                 }
@@ -1103,284 +1146,6 @@ include 'nav_bar.php';
                 }
             });
         });
-    }
-
-    function setupModalEvents() {
-        const backdrop = document.getElementById('expenseModalBackdrop');
-        
-        // Close modals when clicking backdrop
-        backdrop.addEventListener('click', function() {
-            closeAddExpenseModal();
-            closeEditExpenseModal();
-            closeDeleteExpenseModal();
-        });
-
-        // Close modals when pressing Escape key
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape') {
-                closeAddExpenseModal();
-                closeEditExpenseModal();
-                closeDeleteExpenseModal();
-            }
-        });
-
-        // Prevent modal close when clicking inside modals
-        const modals = ['addExpenseModal', 'editExpenseModal', 'deleteExpenseModal'];
-        modals.forEach(modalId => {
-            const modal = document.getElementById(modalId);
-            if (modal) {
-                modal.addEventListener('click', function(e) {
-                    e.stopPropagation();
-                });
-            }
-        });
-    }
-
-    function setupFormValidation() {
-        // Add expense form validation
-        const addForm = document.getElementById('expenseForm');
-        if (addForm) {
-            addForm.addEventListener('submit', function(e) {
-                if (!validateExpenseForm('expenseForm')) {
-                    e.preventDefault();
-                    return false;
-                }
-                
-                // Show loading state
-                const submitBtn = this.querySelector('#submitExpense');
-                if (submitBtn) {
-                    submitBtn.disabled = true;
-                    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i> Saving...';
-                }
-            });
-        }
-
-        // Edit expense form validation
-        const editForm = document.getElementById('editExpenseForm');
-        if (editForm) {
-            editForm.addEventListener('submit', function(e) {
-                if (!validateExpenseForm('editExpenseForm')) {
-                    e.preventDefault();
-                    return false;
-                }
-                
-                // Show loading state
-                const submitBtn = this.querySelector('#updateExpense');
-                if (submitBtn) {
-                    submitBtn.disabled = true;
-                    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i> Updating...';
-                }
-            });
-        }
-
-        // Delete expense form confirmation
-        const deleteForm = document.getElementById('deleteExpenseForm');
-        if (deleteForm) {
-            deleteForm.addEventListener('submit', function(e) {
-                // Show loading state
-                const submitBtn = this.querySelector('#confirmDelete');
-                if (submitBtn) {
-                    submitBtn.disabled = true;
-                    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i> Deleting...';
-                }
-            });
-        }
-    }
-
-    function initializeExpenseManagement() {
-        console.log('Initializing expense management...');
-        
-        // Set today's date as default for add form
-        const today = new Date().toISOString().split('T')[0];
-        const dateInput = document.querySelector('#expenseForm input[name="date"]');
-        if (dateInput) {
-            dateInput.value = today;
-        }
-
-        // Setup all event listeners and utilities
-        setupModalEvents();
-        setupFormValidation();
-        setupCurrencyFormatting();
-        calculateNetAmount();
-        setupTooltips();
-        
-        // Force close any open modals on page load
-        closeAddExpenseModal();
-        closeEditExpenseModal();
-        closeDeleteExpenseModal();
-        
-        console.log('Expense management initialized successfully');
-    }
-
-    // Enhanced table row interactions
-    function setupTableInteractions() {
-        const expenseRows = document.querySelectorAll('.expense-row');
-        
-        expenseRows.forEach(row => {
-            // Add hover effects
-            row.addEventListener('mouseenter', function() {
-                this.style.backgroundColor = '#f8f9fa';
-                this.style.transition = 'background-color 0.2s ease';
-            });
-            
-            row.addEventListener('mouseleave', function() {
-                this.style.backgroundColor = '';
-            });
-            
-            // Add click effect for better UX
-            row.addEventListener('click', function(e) {
-                if (!e.target.closest('.action-buttons')) {
-                    this.style.backgroundColor = '#e9ecef';
-                    setTimeout(() => {
-                        this.style.backgroundColor = '';
-                    }, 200);
-                }
-            });
-        });
-    }
-
-    // Search and filter functionality
-    function setupSearchFilter() {
-        const searchInput = document.createElement('input');
-        searchInput.type = 'text';
-        searchInput.placeholder = 'Search expenses...';
-        searchInput.className = 'form-control mb-3';
-        searchInput.style.maxWidth = '300px';
-        
-        const tableSection = document.querySelector('.expenses-table-section');
-        const table = document.querySelector('.data-table');
-        const tbody = table.querySelector('tbody');
-        
-        if (tableSection && tbody) {
-            // Insert search input before the table
-            const tableContainer = table.closest('.table-container');
-            tableContainer.parentNode.insertBefore(searchInput, tableContainer);
-            
-            searchInput.addEventListener('input', function() {
-                const searchTerm = this.value.toLowerCase();
-                const rows = tbody.querySelectorAll('tr');
-                
-                rows.forEach(row => {
-                    const text = row.textContent.toLowerCase();
-                    if (text.includes(searchTerm)) {
-                        row.style.display = '';
-                    } else {
-                        row.style.display = 'none';
-                    }
-                });
-            });
-        }
-    }
-
-    // Export functionality
-    function setupExportFunctionality() {
-        const exportBtn = document.createElement('button');
-        exportBtn.className = 'btn btn-outline-success btn-sm';
-        exportBtn.innerHTML = '<i class="fas fa-download me-2"></i>Export';
-        
-        const filterSection = document.querySelector('.filter-section .card-body');
-        if (filterSection) {
-            const filterGroup = filterSection.querySelector('.filter-group');
-            if (filterGroup) {
-                const exportItem = document.createElement('div');
-                exportItem.className = 'filter-item';
-                exportItem.appendChild(exportBtn);
-                filterGroup.appendChild(exportItem);
-                
-                exportBtn.addEventListener('click', function() {
-                    exportExpensesToCSV();
-                });
-            }
-        }
-    }
-
-    function exportExpensesToCSV() {
-        const expenses = <?php echo json_encode($expenses); ?>;
-        const periodName = "<?php echo htmlspecialchars($selected_period_name); ?>";
-        
-        if (!expenses || expenses.length === 0) {
-            showAlert('No expenses to export', 'warning');
-            return;
-        }
-        
-        let csvContent = 'data:text/csv;charset=utf-8,';
-        csvContent += `Expenses for ${periodName}\n\n`;
-        csvContent += 'Date,Category,Description,Amount,Tax,Fees,Net Expense,Notes\n';
-        
-        expenses.forEach(expense => {
-            const netAmount = expense.amount + expense.tax + expense.fees;
-            const row = [
-                expense.date,
-                `"${expense.category}"`,
-                `"${expense.description}"`,
-                expense.amount,
-                expense.tax,
-                expense.fees,
-                netAmount,
-                `"${expense.notes || ''}"`
-            ];
-            csvContent += row.join(',') + '\n';
-        });
-        
-        const encodedUri = encodeURI(csvContent);
-        const link = document.createElement('a');
-        link.setAttribute('href', encodedUri);
-        link.setAttribute('download', `expenses_${periodName.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        
-        showAlert('Expenses exported successfully', 'success');
-    }
-
-    // Initialize everything when DOM is loaded
-    document.addEventListener('DOMContentLoaded', function() {
-        console.log('DOM loaded - initializing expense management system');
-        
-        initializeExpenseManagement();
-        setupTableInteractions();
-        setupSearchFilter();
-        setupExportFunctionality();
-        
-        // Add net amount display to modals if not present
-        addNetAmountDisplay();
-    });
-
-    // Add net amount display to forms
-    function addNetAmountDisplay() {
-        const addForm = document.getElementById('expenseForm');
-        const editForm = document.getElementById('editExpenseForm');
-        
-        function createNetDisplay(form) {
-            const amountGrid = form.querySelector('.form-grid');
-            if (amountGrid && !form.querySelector('.net-amount-display')) {
-                const netContainer = document.createElement('div');
-                netContainer.className = 'form-group';
-                netContainer.innerHTML = `
-                    <label class="form-label">Net Amount (KSH)</label>
-                    <div class="net-amount-display form-control" style="background-color: #e9ecef; font-weight: bold;">
-                        KSH 0.00
-                    </div>
-                `;
-                amountGrid.appendChild(netContainer);
-            }
-        }
-        
-        if (addForm) createNetDisplay(addForm);
-        if (editForm) createNetDisplay(editForm);
-    }
-
-    // Double check on window load
-    window.addEventListener('load', function() {
-        console.log('Window loaded - final checks');
-        
-        // Ensure all modals are closed
-        closeAddExpenseModal();
-        closeEditExpenseModal();
-        closeDeleteExpenseModal();
-        
-        // Re-initialize tooltips in case dynamic content was added
-        setupTooltips();
     });
     </script>
 </body>
