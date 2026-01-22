@@ -1,6 +1,40 @@
 <?php
 // security.php
 
+// Initialize session only once
+function initSecureSession() {
+    $sessionStatus = session_status();
+    
+    if ($sessionStatus === PHP_SESSION_NONE) {
+        // Configure session settings
+        ini_set('session.cookie_httponly', 1);
+        ini_set('session.use_only_cookies', 1);
+        ini_set('session.use_strict_mode', 1);
+        
+        // Only set secure cookie if using HTTPS
+        if (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') {
+            ini_set('session.cookie_secure', 1);
+        }
+        
+        ini_set('session.cookie_samesite', 'Strict');
+        
+        // Start session
+        session_start();
+        
+        // Initialize CSRF token if not exists
+        if (!isset($_SESSION['csrf_token'])) {
+            $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+        }
+        
+        // Mark session as initialized
+        $_SESSION['session_initialized'] = true;
+        
+        return true;
+    }
+    
+    return false; // Session was already started
+}
+
 // CSRF Protection Functions
 function generateCSRFToken() {
     if (!isset($_SESSION['csrf_token'])) {
@@ -24,13 +58,17 @@ function sanitizeInput($input, $type = 'string') {
         }, $input);
     }
     
-    $input = trim($input);
+    if (!is_string($input) && !is_numeric($input)) {
+        return $input;
+    }
+    
+    $input = trim(strval($input));
     
     switch ($type) {
         case 'int':
-            return filter_var($input, FILTER_SANITIZE_NUMBER_INT);
+            return (int)filter_var($input, FILTER_SANITIZE_NUMBER_INT);
         case 'float':
-            return filter_var($input, FILTER_SANITIZE_NUMBER_FLOAT, FILTER_FLAG_ALLOW_FRACTION);
+            return (float)filter_var($input, FILTER_SANITIZE_NUMBER_FLOAT, FILTER_FLAG_ALLOW_FRACTION);
         case 'email':
             return filter_var($input, FILTER_SANITIZE_EMAIL);
         case 'url':
@@ -54,21 +92,21 @@ function validateInput($input, $rules) {
         $rulesArray = explode('|', $rule);
         
         foreach ($rulesArray as $singleRule) {
-            if ($singleRule === 'required' && empty($value)) {
+            if ($singleRule === 'required' && (empty($value) && $value !== '0')) {
                 $errors[$field] = ucfirst($field) . ' is required';
                 break;
             }
             
             if (strpos($singleRule, 'min:') === 0) {
                 $min = intval(str_replace('min:', '', $singleRule));
-                if (strlen($value) < $min) {
+                if (strlen(strval($value)) < $min) {
                     $errors[$field] = ucfirst($field) . " must be at least $min characters";
                 }
             }
             
             if (strpos($singleRule, 'max:') === 0) {
                 $max = intval(str_replace('max:', '', $singleRule));
-                if (strlen($value) > $max) {
+                if (strlen(strval($value)) > $max) {
                     $errors[$field] = ucfirst($field) . " must be less than $max characters";
                 }
             }
@@ -124,24 +162,32 @@ function checkRateLimit($key, $limit = 10, $timeframe = 60) {
 
 // XSS Protection Headers
 function setSecurityHeaders() {
-    header("X-Frame-Options: DENY");
-    header("X-XSS-Protection: 1; mode=block");
-    header("X-Content-Type-Options: nosniff");
-    header("Referrer-Policy: strict-origin-when-cross-origin");
-    
-    // Content Security Policy - adjust based on your needs
-    $csp = [
-        "default-src 'self'",
-        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com",
-        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com",
-        "img-src 'self' data: https:",
-        "font-src 'self' https://cdnjs.cloudflare.com"
-    ];
-    header("Content-Security-Policy: " . implode("; ", $csp));
+    if (!headers_sent()) {
+        header("X-Frame-Options: DENY");
+        header("X-XSS-Protection: 1; mode=block");
+        header("X-Content-Type-Options: nosniff");
+        header("Referrer-Policy: strict-origin-when-cross-origin");
+        
+        // Content Security Policy - adjust based on your needs
+        $csp = [
+            "default-src 'self'",
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com",
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com",
+            "img-src 'self' data: https:",
+            "font-src 'self' https://cdnjs.cloudflare.com",
+            "connect-src 'self'"
+        ];
+        header("Content-Security-Policy: " . implode("; ", $csp));
+        
+        // Prevent caching of sensitive pages
+        header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
+        header("Pragma: no-cache");
+        header("Expires: 0");
+    }
 }
 
 // SQL Injection Protection
-function prepareStatement($conn, $sql, $params, $types = "") {
+function prepareStatement($conn, $sql, $params = [], $types = "") {
     $stmt = $conn->prepare($sql);
     if (!$stmt) {
         error_log("Prepare failed: " . $conn->error);
@@ -165,65 +211,69 @@ function validateFileUpload($file, $allowedTypes = ['image/jpeg', 'image/png', '
     }
     
     if ($file['size'] > $maxSize) {
-        $errors[] = "File size exceeds maximum allowed size";
+        $errors[] = "File size exceeds maximum allowed size (" . ($maxSize / 1024 / 1024) . "MB)";
     }
     
-    $finfo = finfo_open(FILEINFO_MIME_TYPE);
-    $mimeType = finfo_file($finfo, $file['tmp_name']);
-    finfo_close($finfo);
-    
-    if (!in_array($mimeType, $allowedTypes)) {
-        $errors[] = "Invalid file type";
+    // Get MIME type using finfo if available
+    if (function_exists('finfo_open')) {
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        $mimeType = finfo_file($finfo, $file['tmp_name']);
+        finfo_close($finfo);
+        
+        if (!in_array($mimeType, $allowedTypes)) {
+            $errors[] = "Invalid file type. Allowed types: " . implode(', ', $allowedTypes);
+        }
     }
     
-    // Check file extension
+    // Check file extension as additional security
     $extension = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
     $allowedExtensions = ['jpg', 'jpeg', 'png', 'gif', 'pdf'];
     if (!in_array($extension, $allowedExtensions)) {
-        $errors[] = "Invalid file extension";
+        $errors[] = "Invalid file extension. Allowed: " . implode(', ', $allowedExtensions);
     }
     
     return $errors;
 }
 
-// Session Security - FIXED VERSION
-function secureSession() {
-    // Check if session is already active
-    $sessionStatus = session_status();
+// Logging Function with improved error handling
+function securityLog($message, $level = 'INFO', $user_id = null) {
+    $logDir = __DIR__;
+    $logFile = $logDir . '/security.log';
     
-    if ($sessionStatus === PHP_SESSION_NONE) {
-        // No session exists, we can set ini settings
-        ini_set('session.cookie_httponly', 1);
-        ini_set('session.cookie_secure', 1); // Enable if using HTTPS
-        ini_set('session.cookie_samesite', 'Strict');
-        
-        // Start the session
-        session_start();
-    } elseif ($sessionStatus === PHP_SESSION_ACTIVE) {
-        // Session is already active, we can only regenerate ID
-        // Note: We cannot change ini settings when session is active
+    // Ensure log directory is writable
+    if (!is_writable($logDir)) {
+        // Try to fix permissions
+        if (!file_exists($logDir)) {
+            mkdir($logDir, 0755, true);
+        } else {
+            chmod($logDir, 0755);
+        }
     }
     
-    // Regenerate session ID to prevent session fixation
-    session_regenerate_id(true);
-}
-
-// Logging Function
-function securityLog($message, $level = 'INFO', $user_id = null) {
-    $logFile = __DIR__ . '/security.log';
     $timestamp = date('Y-m-d H:i:s');
     $ip = $_SERVER['REMOTE_ADDR'] ?? 'UNKNOWN';
     $user_id = $user_id ?? ($_SESSION['user_id'] ?? 'GUEST');
+    $requestUri = $_SERVER['REQUEST_URI'] ?? 'UNKNOWN';
     
-    $logMessage = "[$timestamp] [$level] [$ip] [User:$user_id] $message\n";
+    $logMessage = "[$timestamp] [$level] [IP:$ip] [User:$user_id] [URI:$requestUri] $message\n";
     
-    // Create log file if it doesn't exist
-    if (!file_exists($logFile)) {
-        touch($logFile);
-        chmod($logFile, 0644);
+    // Try multiple methods to write log
+    try {
+        // Method 1: Direct file write
+        $result = @file_put_contents($logFile, $logMessage, FILE_APPEND | LOCK_EX);
+        
+        if ($result === false) {
+            // Method 2: Try alternative location
+            $altLog = '/tmp/vinmel_security_' . date('Y-m-d') . '.log';
+            @file_put_contents($altLog, $logMessage, FILE_APPEND | LOCK_EX);
+            
+            // Method 3: Use error_log
+            error_log("SECURITY_LOG: " . trim($logMessage));
+        }
+    } catch (Exception $e) {
+        // Final fallback
+        error_log("Security log failed: " . $e->getMessage() . " | Original: " . $message);
     }
-    
-    file_put_contents($logFile, $logMessage, FILE_APPEND | LOCK_EX);
 }
 
 // Simplified sanitization for quick use
@@ -231,6 +281,11 @@ function clean($data) {
     if (is_array($data)) {
         return array_map('clean', $data);
     }
+    
+    if (!is_string($data)) {
+        return $data;
+    }
+    
     return htmlspecialchars(trim($data), ENT_QUOTES, 'UTF-8');
 }
 
@@ -272,21 +327,102 @@ function validateFloat($value, $min = null, $max = null) {
     return true;
 }
 
-// Initialize secure session if not already started
-function initSecureSession() {
-    if (session_status() === PHP_SESSION_NONE) {
-        // Set session settings before starting
-        ini_set('session.cookie_httponly', 1);
-        ini_set('session.cookie_secure', 1); // Enable if using HTTPS
-        ini_set('session.cookie_samesite', 'Strict');
-        
-        session_start();
-        
-        // Regenerate session ID to prevent session fixation
-        if (empty($_SESSION['initiated'])) {
-            session_regenerate_id(true);
-            $_SESSION['initiated'] = true;
+// Session validation function
+function validateSession() {
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        return false;
+    }
+    
+    // Check for session hijacking
+    $current_ip = $_SERVER['REMOTE_ADDR'] ?? '';
+    $current_ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
+    
+    if (!isset($_SESSION['user_ip'])) {
+        $_SESSION['user_ip'] = $current_ip;
+    }
+    
+    if (!isset($_SESSION['user_agent'])) {
+        $_SESSION['user_agent'] = $current_ua;
+    }
+    
+    // Verify IP and User Agent (allow some flexibility for proxies)
+    $ip_match = $_SESSION['user_ip'] === $current_ip;
+    $ua_match = $_SESSION['user_agent'] === $current_ua;
+    
+    if (!$ip_match || !$ua_match) {
+        securityLog("Session validation failed: IP or UA mismatch", 'WARNING');
+        return false;
+    }
+    
+    // Check session expiration (1 hour)
+    if (!isset($_SESSION['login_time'])) {
+        return false;
+    }
+    
+    if (time() - $_SESSION['login_time'] > 3600) {
+        return false;
+    }
+    
+    // Update last activity
+    $_SESSION['login_time'] = time();
+    
+    return true;
+}
+
+// Add this function to check if user is logged in
+function isLoggedIn() {
+    return validateSession() && isset($_SESSION['user_id']);
+}
+
+// Add this function to check if user is admin
+function isAdmin() {
+    return isLoggedIn() && isset($_SESSION['role']) && 
+           ($_SESSION['role'] === 'admin' || $_SESSION['role'] === 'super_admin');
+}
+
+// Function to safely destroy session
+function destroySession() {
+    $_SESSION = array();
+    
+    if (ini_get("session.use_cookies")) {
+        $params = session_get_cookie_params();
+        setcookie(session_name(), '', time() - 42000,
+            $params["path"], $params["domain"],
+            $params["secure"], $params["httponly"]
+        );
+    }
+    
+    session_destroy();
+}
+
+// Function to check and create necessary files
+function checkSecurityFiles() {
+    $logFile = __DIR__ . '/security.log';
+    $errorLog = __DIR__ . '/php_errors.log';
+    
+    // Create security.log if it doesn't exist
+    if (!file_exists($logFile)) {
+        $handle = fopen($logFile, 'w');
+        if ($handle) {
+            fwrite($handle, "[" . date('Y-m-d H:i:s') . "] [INFO] Security log initialized\n");
+            fclose($handle);
+            chmod($logFile, 0644);
         }
     }
+    
+    // Create php_errors.log if it doesn't exist
+    if (!file_exists($errorLog)) {
+        $handle = fopen($errorLog, 'w');
+        if ($handle) {
+            fwrite($handle, "[" . date('Y-m-d H:i:s') . "] PHP Error Log initialized\n");
+            fclose($handle);
+            chmod($errorLog, 0644);
+        }
+    }
+    
+    return [file_exists($logFile), file_exists($errorLog)];
 }
+
+// Initialize security check on include
+checkSecurityFiles();
 ?>

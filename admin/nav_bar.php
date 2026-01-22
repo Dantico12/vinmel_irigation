@@ -13,12 +13,18 @@
         <!-- Managerial Section (New) -->
         <div class="nav-section">
             <div class="nav-section-title">Managerial</div>
-           
-            
+             <a href="periods.php" class="nav-link">
+                <i class="fas fa-plus-square"></i>
+                Start Period         </a>
+        </div>
+
             <a href="add_product.php" class="nav-link">
                 <i class="fas fa-plus-square"></i>
                 Add Products
             </a>
+             <a href="products_stats.php" class="nav-link">
+                <i class="fas fa-plus-square"></i>
+                Products Stats            </a>
         </div>
 
         <!-- Financial Management -->

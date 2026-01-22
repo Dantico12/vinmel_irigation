@@ -65,4 +65,5 @@ function calculateProfitMargin($income) {
     return $income > 0 ? round(($profit / $income) * 100, 2) : 0;
 }
 
+
 ?>
