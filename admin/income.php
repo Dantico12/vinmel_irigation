@@ -29,7 +29,7 @@ while ($period = $periods_result->fetch_assoc()) {
     $all_periods[] = $period;
 }
 
-// Build query for sales transactions (these are your income)
+// Build query for sales transactions
 $query = "
     SELECT 
         t.id,
@@ -98,7 +98,7 @@ if (!empty($params)) {
 $stmt->execute();
 $income_result = $stmt->get_result();
 
-// Calculate totals using the correct column names
+// Calculate totals
 $totals_query = "
     SELECT 
         SUM(t.total_amount) as total_amount,
@@ -174,10 +174,164 @@ unset($_SESSION['error_message']);
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Income Management - Vinmel Irrigation</title>
-    <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+    <style>
+        /* Custom styles to fix layout */
+        body {
+            padding-top: 0;
+            background-color: #f8f9fa;
+        }
+        
+        .main-content {
+            margin-left: 280px;
+            margin-top: 70px;
+            padding: 20px;
+            min-height: calc(100vh - 70px);
+            transition: all 0.3s ease;
+            background-color: #f8f9fa;
+        }
+        
+        .content-area {
+            padding: 0;
+        }
+        
+        .dashboard-header {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border-left: 4px solid #28a745;
+        }
+        
+        .income-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+        
+        .income-stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border-top: 4px solid #28a745;
+        }
+        
+        .income-stat-value {
+            font-size: 1.75rem;
+            font-weight: bold;
+            color: #28a745;
+            margin: 10px 0;
+        }
+        
+        .income-stat-label {
+            color: #6c757d;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+        
+        .table {
+            margin-bottom: 0;
+        }
+        
+        .table th {
+            background-color: #f8f9fa;
+            font-weight: 600;
+            border-bottom: 2px solid #dee2e6;
+        }
+        
+        .table td {
+            vertical-align: middle;
+        }
+        
+        .table tbody tr:hover {
+            background-color: rgba(0,123,255,0.05);
+        }
+        
+        .badge-cash { 
+            background-color: rgba(40,167,69,0.1); 
+            color: #28a745; 
+            border: 1px solid rgba(40,167,69,0.2);
+        }
+        
+        .badge-card { 
+            background-color: rgba(0,123,255,0.1); 
+            color: #007bff; 
+            border: 1px solid rgba(0,123,255,0.2);
+        }
+        
+        .badge-mobile { 
+            background-color: rgba(111,66,193,0.1); 
+            color: #6f42c1; 
+            border: 1px solid rgba(111,66,193,0.2);
+        }
+        
+        .transaction-products {
+            max-width: 200px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .amount-positive {
+            color: #28a745;
+            font-weight: 600;
+        }
+        
+        @media (max-width: 992px) {
+            .main-content {
+                margin-left: 0;
+                padding: 15px;
+            }
+            
+            .sidebar {
+                transform: translateX(-100%);
+            }
+            
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .income-stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .table-responsive {
+                font-size: 0.9rem;
+            }
+            
+            .btn-group-sm {
+                flex-direction: column;
+                gap: 2px;
+            }
+            
+            .btn-group-sm .btn {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+        
+        @media (max-width: 576px) {
+            .income-stats {
+                grid-template-columns: 1fr;
+            }
+            
+            .dashboard-header h1 {
+                font-size: 1.5rem;
+            }
+            
+            .income-stat-value {
+                font-size: 1.5rem;
+            }
+        }
+    </style>
 </head>
 <body>
     <?php include 'header.php'; ?>
@@ -189,41 +343,46 @@ unset($_SESSION['error_message']);
             <!-- Page Header -->
             <div class="dashboard-header">
                 <div>
-                    <h1><i class="fas fa-money-bill-wave"></i> Sales & Income</h1>
-                    <p class="text-muted">Track and manage all sales transactions and income</p>
+                    <h1><i class="fas fa-money-bill-wave me-2"></i>Sales & Income</h1>
+                    <p class="text-muted mb-0">Track and manage all sales transactions and income</p>
                 </div>
-                
             </div>
 
             <!-- Success/Error Messages -->
             <?php if ($success_message): ?>
-                <div class="alert alert-success">
-                    <i class="fas fa-check-circle"></i> <?php echo $success_message; ?>
+                <div class="alert alert-success alert-dismissible fade show" role="alert">
+                    <i class="fas fa-check-circle me-2"></i><?php echo $success_message; ?>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                 </div>
             <?php endif; ?>
             
             <?php if ($error_message): ?>
-                <div class="alert alert-danger">
-                    <i class="fas fa-exclamation-circle"></i> <?php echo $error_message; ?>
+                <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                    <i class="fas fa-exclamation-circle me-2"></i><?php echo $error_message; ?>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                 </div>
             <?php endif; ?>
 
             <!-- Current Period Info -->
             <?php if ($current_period): ?>
-                <div class="alert alert-info">
-                    <i class="fas fa-info-circle"></i>
-                    <strong>Current Active Period:</strong> <?php echo htmlspecialchars($current_period['period_name']); ?>
-                    (<?php echo date('M j, Y', strtotime($current_period['start_date'])); ?> - <?php echo date('M j, Y', strtotime($current_period['end_date'])); ?>)
-                    <?php if ($current_period['is_locked']): ?>
-                        <span class="badge badge-warning">Locked</span>
-                    <?php else: ?>
-                        <span class="badge badge-success">Active</span>
-                    <?php endif; ?>
+                <div class="alert alert-info d-flex align-items-center">
+                    <i class="fas fa-info-circle me-3"></i>
+                    <div>
+                        <strong>Current Active Period:</strong> <?php echo htmlspecialchars($current_period['period_name']); ?>
+                        (<?php echo date('M j, Y', strtotime($current_period['start_date'])); ?> - <?php echo date('M j, Y', strtotime($current_period['end_date'])); ?>)
+                        <?php if ($current_period['is_locked']): ?>
+                            <span class="badge bg-warning ms-2">Locked</span>
+                        <?php else: ?>
+                            <span class="badge bg-success ms-2">Active</span>
+                        <?php endif; ?>
+                    </div>
                 </div>
             <?php else: ?>
-                <div class="alert alert-warning">
-                    <i class="fas fa-exclamation-triangle"></i>
-                    <strong>No Active Period:</strong> Please create or activate a period to track sales.
+                <div class="alert alert-warning d-flex align-items-center">
+                    <i class="fas fa-exclamation-triangle me-3"></i>
+                    <div>
+                        <strong>No Active Period:</strong> Please create or activate a period to track sales.
+                    </div>
                 </div>
             <?php endif; ?>
 
@@ -256,14 +415,14 @@ unset($_SESSION['error_message']);
 
             <!-- Period Selector -->
             <div class="card mb-4">
-                <div class="card-header">
-                    <h5 class="mb-0"><i class="fas fa-calendar-alt"></i> Select Time Period</h5>
+                <div class="card-header bg-white">
+                    <h5 class="mb-0"><i class="fas fa-calendar-alt me-2"></i>Select Time Period</h5>
                 </div>
                 <div class="card-body">
                     <form method="GET" action="" class="row align-items-end">
                         <div class="col-md-8">
                             <label class="form-label">View Sales For Period:</label>
-                            <select name="period" class="form-control form-select" onchange="this.form.submit()">
+                            <select name="period" class="form-select" onchange="this.form.submit()">
                                 <option value="">-- Select Period --</option>
                                 <?php foreach ($all_periods as $period): ?>
                                     <option value="<?php echo $period['id']; ?>" 
@@ -278,7 +437,7 @@ unset($_SESSION['error_message']);
                         </div>
                         <div class="col-md-4">
                             <?php if ($selected_period_info): ?>
-                                <div class="period-info alert alert-info mb-0">
+                                <div class="alert alert-info mb-0">
                                     <div class="d-flex justify-content-between align-items-center">
                                         <div>
                                             <strong><?php echo htmlspecialchars($selected_period_info['period_name']); ?></strong>
@@ -286,13 +445,13 @@ unset($_SESSION['error_message']);
                                             <?php echo date('M j, Y', strtotime($selected_period_info['start_date'])); ?> - 
                                             <?php echo date('M j, Y', strtotime($selected_period_info['end_date'])); ?>
                                         </div>
-                                        <div class="period-status">
+                                        <div>
                                             <?php if ($selected_period_info['is_active'] == 1): ?>
-                                                <span class="badge badge-success">Active</span>
+                                                <span class="badge bg-success">Active</span>
                                             <?php elseif ($selected_period_info['is_locked']): ?>
-                                                <span class="badge badge-warning">Locked</span>
+                                                <span class="badge bg-warning">Locked</span>
                                             <?php else: ?>
-                                                <span class="badge badge-secondary">Inactive</span>
+                                                <span class="badge bg-secondary">Inactive</span>
                                             <?php endif; ?>
                                         </div>
                                     </div>
@@ -311,7 +470,7 @@ unset($_SESSION['error_message']);
                             <input type="hidden" name="period" value="<?php echo $period_filter; ?>">
                         <?php endif; ?>
                         
-                        <div class="row">
+                        <div class="row g-3">
                             <div class="col-md-3">
                                 <label class="form-label">Start Date</label>
                                 <input type="date" name="start_date" class="form-control" 
@@ -341,16 +500,18 @@ unset($_SESSION['error_message']);
                                     <button type="submit" class="btn btn-primary flex-fill">
                                         <i class="fas fa-filter"></i> Filter
                                     </button>
-                                    <a href="income.php" class="btn btn-outline">
+                                    <a href="income.php" class="btn btn-outline-secondary">
                                         <i class="fas fa-times"></i>
                                     </a>
                                 </div>
                             </div>
-                            
-                            <div class="col-md-12 mt-3">
-                                <div class="d-flex gap-2 justify-content-end">
+                        </div>
+                        
+                        <div class="row mt-3">
+                            <div class="col-12">
+                                <div class="d-flex justify-content-end">
                                     <button type="button" onclick="exportToCSV()" class="btn btn-success">
-                                        <i class="fas fa-download"></i> Export CSV
+                                        <i class="fas fa-download me-2"></i> Export CSV
                                     </button>
                                 </div>
                             </div>
@@ -361,15 +522,15 @@ unset($_SESSION['error_message']);
 
             <!-- Sales Transactions Table -->
             <div class="card">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0"><i class="fas fa-receipt"></i> Sales Transactions</h5>
+                <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="fas fa-receipt me-2"></i>Sales Transactions</h5>
                     <div class="text-muted">
                         Showing: <strong><?php echo $income_result->num_rows; ?></strong> transactions
                     </div>
                 </div>
                 <div class="card-body p-0">
                     <div class="table-responsive">
-                        <table class="table" id="income-table">
+                        <table class="table table-hover mb-0" id="income-table">
                             <thead>
                                 <tr>
                                     <th>Date</th>
@@ -395,7 +556,7 @@ unset($_SESSION['error_message']);
                                                 <?php echo date('j M Y H:i', strtotime($transaction['transaction_date'])); ?>
                                             </td>
                                             <td>
-                                                <span class="badge badge-outline badge-primary">
+                                                <span class="badge bg-light text-dark border">
                                                     <?php echo htmlspecialchars($transaction['receipt_number'] ?? 'N/A'); ?>
                                                 </span>
                                             </td>
@@ -416,7 +577,7 @@ unset($_SESSION['error_message']);
                                                 ?>
                                             </td>
                                             <td>
-                                                <span class="badge badge-secondary"><?php echo $transaction['item_count']; ?></span>
+                                                <span class="badge bg-secondary"><?php echo $transaction['item_count']; ?></span>
                                             </td>
                                             <td class="amount-positive">
                                                 KSh <?php echo number_format($transaction['total_amount'], 2); ?>
@@ -431,12 +592,12 @@ unset($_SESSION['error_message']);
                                                 <strong>KSh <?php echo number_format($transaction['net_amount'], 2); ?></strong>
                                             </td>
                                             <td>
-                                                <span class="payment-badge badge-<?php echo $transaction['payment_method']; ?>">
+                                                <span class="badge payment-badge-<?php echo $transaction['payment_method']; ?>">
                                                     <?php echo ucfirst($transaction['payment_method']); ?>
                                                 </span>
                                             </td>
                                             <td>
-                                                <span class="period-badge">
+                                                <span class="badge bg-info text-white">
                                                     <?php echo htmlspecialchars($transaction['period_name'] ?? 'N/A'); ?>
                                                 </span>
                                             </td>
@@ -445,26 +606,26 @@ unset($_SESSION['error_message']);
                                                     <!-- View Receipt Button -->
                                                     <?php if ($transaction['receipt_id']): ?>
                                                         <a href="view_receipt.php?id=<?php echo $transaction['receipt_id']; ?>" 
-                                                           class="btn btn-sm btn-primary" 
+                                                           class="btn btn-primary btn-sm" 
                                                            title="View Receipt" target="_blank">
                                                             <i class="fas fa-eye"></i>
                                                         </a>
                                                         <!-- Print Receipt Button -->
                                                         <a href="view_receipt.php?id=<?php echo $transaction['receipt_id']; ?>&mode=print" 
-                                                           class="btn btn-sm btn-outline-secondary" 
+                                                           class="btn btn-outline-secondary btn-sm" 
                                                            title="Print Receipt" target="_blank">
                                                             <i class="fas fa-print"></i>
                                                         </a>
                                                     <?php else: ?>
-                                                        <button class="btn btn-sm btn-secondary" disabled title="No receipt saved">
+                                                        <button class="btn btn-secondary btn-sm" disabled title="No receipt saved">
                                                             <i class="fas fa-eye"></i>
                                                         </button>
-                                                        <button class="btn btn-sm btn-outline-secondary" disabled title="No receipt saved">
+                                                        <button class="btn btn-outline-secondary btn-sm" disabled title="No receipt saved">
                                                             <i class="fas fa-print"></i>
                                                         </button>
                                                     <?php endif; ?>
                                                     <!-- Delete Button -->
-                                                    <button class="btn btn-sm btn-outline-danger" 
+                                                    <button class="btn btn-outline-danger btn-sm" 
                                                             onclick="confirmDelete(<?php echo $transaction['id']; ?>, '<?php echo htmlspecialchars($transaction['receipt_number']); ?>')"
                                                             title="Delete Transaction">
                                                         <i class="fas fa-trash"></i>
@@ -480,13 +641,13 @@ unset($_SESSION['error_message']);
                                             <p class="text-muted">No sales transactions found.</p>
                                             <?php if (!empty($start_date) || !empty($search) || !empty($period_filter)): ?>
                                                 <p class="text-muted">Try adjusting your filters or</p>
-                                                <a href="income.php" class="btn btn-outline">Clear Filters</a>
+                                                <a href="income.php" class="btn btn-outline-secondary">Clear Filters</a>
                                             <?php else: ?>
                                                 <button type="button" class="btn btn-success" onclick="window.location.href='pos.php'">
-                                                    <i class="fas fa-cash-register"></i> Create Your First Sale
+                                                    <i class="fas fa-cash-register me-2"></i> Create Your First Sale
                                                 </button>
                                             <?php endif; ?>
-                                            </td>
+                                        </td>
                                     </tr>
                                 <?php endif; ?>
                             </tbody>
@@ -509,6 +670,7 @@ unset($_SESSION['error_message']);
         </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         // Export to CSV
         function exportToCSV() {
@@ -575,6 +737,19 @@ unset($_SESSION['error_message']);
             if (!document.querySelector('select[name="period"]').value) {
                 this.form.submit();
             }
+        });
+        
+        // Add payment badge classes dynamically
+        document.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('.payment-badge-cash').forEach(badge => {
+                badge.classList.add('badge-cash');
+            });
+            document.querySelectorAll('.payment-badge-card').forEach(badge => {
+                badge.classList.add('badge-card');
+            });
+            document.querySelectorAll('.payment-badge-mobile').forEach(badge => {
+                badge.classList.add('badge-mobile');
+            });
         });
     </script>
 </body>
