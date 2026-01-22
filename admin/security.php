@@ -18,8 +18,6 @@ function initSecureSession() {
         
         ini_set('session.cookie_samesite', 'Strict');
         
-        // Start session
-        session_start();
         
         // Initialize CSRF token if not exists
         if (!isset($_SESSION['csrf_token'])) {
