@@ -29,6 +29,7 @@ $edit_product = null;
 $category_message = '';
 $category_error = '';
 $selected_period_id = isset($_GET['period_id']) ? intval($_GET['period_id']) : null;
+$selected_day = isset($_GET['day']) ? sanitizeInput($_GET['day'], 'string') : null;
 
 // Rate limiting check for form submissions
 $rateLimitKey = "product_form_" . $user_id;
@@ -377,6 +378,28 @@ if ($period_tracking_enabled) {
 }
 
 /* -------------------------------------------------------
+   FETCH AVAILABLE DAYS FOR FILTERING
+-------------------------------------------------------- */
+
+$available_days = [];
+if ($selected_period_id) {
+    // Get all unique days within the selected period
+    $days_sql = "SELECT DISTINCT DATE(added_date) as day 
+                 FROM products 
+                 WHERE period_id = ? 
+                 AND added_date IS NOT NULL 
+                 ORDER BY day DESC";
+    $days_stmt = $db->prepare($days_sql);
+    $days_stmt->bind_param("i", $selected_period_id);
+    $days_stmt->execute();
+    $days_result = $days_stmt->get_result();
+    
+    while ($day = $days_result->fetch_assoc()) {
+        $available_days[] = $day['day'];
+    }
+}
+
+/* -------------------------------------------------------
    HANDLE PRODUCT FORM SUBMISSIONS - ADMIN VERSION WITH RESTRICTIONS
 -------------------------------------------------------- */
 
@@ -680,18 +703,27 @@ if ($selected_period_id) {
         $where_conditions[] = "p.period_id = ?";
         $params[] = $selected_period_id;
         $param_types .= "i";
+        
+        // Add day filter if period is selected
+        if ($selected_day) {
+            $where_conditions[] = "DATE(p.added_date) = ?";
+            $params[] = $selected_day;
+            $param_types .= "s";
+        }
     }
 }
 
 if ($period_tracking_enabled) {
     $sql = "SELECT p.*, u.name as creator_name, u.email as creator_email,
-                   tp.period_name, tp.is_locked as period_locked 
+                   tp.period_name, tp.is_locked as period_locked,
+                   DATE(p.added_date) as added_day
             FROM products p 
             LEFT JOIN users u ON p.created_by = u.id 
             LEFT JOIN time_periods tp ON p.period_id = tp.id";
 } else {
     $sql = "SELECT p.*, u.name as creator_name, u.email as creator_email,
-                   NULL as period_name, NULL as period_locked 
+                   NULL as period_name, NULL as period_locked,
+                   NULL as added_day
             FROM products p 
             LEFT JOIN users u ON p.created_by = u.id";
 }
@@ -722,6 +754,7 @@ $low_stock_count = 0;
 $total_stock_value = 0;
 $products_by_period = [];
 $products_by_user = [];
+$products_by_day = [];
 
 foreach ($products as $product) {
     // Sanitize product data for display
@@ -760,6 +793,15 @@ foreach ($products as $product) {
         $products_by_user[$user_key] = 0;
     }
     $products_by_user[$user_key]++;
+    
+    // Group by day
+    if ($product['added_day']) {
+        $day_key = $product['added_day'];
+        if (!isset($products_by_day[$day_key])) {
+            $products_by_day[$day_key] = 0;
+        }
+        $products_by_day[$day_key]++;
+    }
 }
 
 // If no period tracking, create a dummy entry
@@ -777,7 +819,6 @@ if (!$period_tracking_enabled) {
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <link href="style.css" rel="stylesheet">
-  
 </head>
 <body>
     <?php include 'nav_bar.php'; ?>
@@ -885,42 +926,70 @@ if (!$period_tracking_enabled) {
                 <div class="card period-filter-card mb-4">
                     <div class="card-body">
                         <div class="row align-items-center">
-                            <div class="col-md-6">
+                            <div class="col-md-5">
                                 <h5 class="card-title text-white mb-0">
-                                    <i class="fas fa-filter me-2"></i>Filter by Period
+                                    <i class="fas fa-filter me-2"></i>Filter by Period & Day
                                 </h5>
-                                <p class="text-white-50 mb-0">View products from specific time periods</p>
+                                <p class="text-white-50 mb-0">View products from specific time periods and days</p>
                             </div>
-                            <div class="col-md-6">
-                                <form method="GET" class="d-flex gap-2">
+                            <div class="col-md-7">
+                                <form method="GET" class="d-flex flex-wrap gap-2">
                                     <input type="hidden" name="csrf_token" value="<?= $csrf_token ?>">
-                                    <select name="period_id" class="form-select" onchange="this.form.submit()">
-                                        <option value="">All Periods</option>
-                                        <?php foreach ($periods as $period): 
-                                            $status_class = '';
-                                            if ($period['status'] == 'active') {
-                                                $status_class = 'period-status-active';
-                                            } elseif ($period['status'] == 'open') {
-                                                $status_class = 'period-status-open';
-                                            } elseif ($period['is_locked']) {
-                                                $status_class = 'period-status-locked';
-                                            }
-                                        ?>
-                                            <option value="<?= $period['id'] ?>" 
-                                                <?= $selected_period_id == $period['id'] ? 'selected' : '' ?>
-                                                class="<?= $status_class ?>">
-                                                <?= htmlspecialchars($period['period_name']) ?>
-                                                - <?= date('M j, Y', strtotime($period['start_date'])) ?> to <?= date('M j, Y', strtotime($period['end_date'])) ?>
-                                                (<?= ucfirst($period['is_active']) ?><?= $period['is_locked'] ? ', Locked' : '' ?>)
-                                            </option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                    <?php if ($selected_period_id): ?>
+                                    <div class="flex-grow-1">
+                                        <select name="period_id" class="form-select" id="periodSelector" onchange="this.form.submit()">
+                                            <option value="">All Periods</option>
+                                            <?php foreach ($periods as $period): 
+                                                $status_class = '';
+                                                if ($period['status'] == 'active') {
+                                                    $status_class = 'period-status-active';
+                                                } elseif ($period['status'] == 'open') {
+                                                    $status_class = 'period-status-open';
+                                                } elseif ($period['is_locked']) {
+                                                    $status_class = 'period-status-locked';
+                                                }
+                                            ?>
+                                                <option value="<?= $period['id'] ?>" 
+                                                    <?= $selected_period_id == $period['id'] ? 'selected' : '' ?>
+                                                    class="<?= $status_class ?>">
+                                                    <?= htmlspecialchars($period['period_name']) ?>
+                                                    - <?= date('M j, Y', strtotime($period['start_date'])) ?> to <?= date('M j, Y', strtotime($period['end_date'])) ?>
+                                                    (<?= ucfirst($period['is_active']) ?><?= $period['is_locked'] ? ', Locked' : '' ?>)
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
+                                    <div class="flex-grow-1">
+                                        <select name="day" class="form-select" id="daySelector" onchange="this.form.submit()" <?= !$selected_period_id ? 'disabled' : '' ?>>
+                                            <option value="">All Days</option>
+                                            <?php foreach ($available_days as $day): 
+                                                $formatted_day = date('M j, Y (l)', strtotime($day));
+                                            ?>
+                                                <option value="<?= $day ?>" <?= $selected_day == $day ? 'selected' : '' ?>>
+                                                    <?= $formatted_day ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
+                                    <?php if ($selected_period_id || $selected_day): ?>
                                         <a href="?" class="btn btn-light">
-                                            <i class="fas fa-times me-1"></i>Clear
+                                            <i class="fas fa-times me-1"></i>Clear All
                                         </a>
                                     <?php endif; ?>
                                 </form>
+                                <?php if ($selected_period_id): ?>
+                                    <div class="text-white small mt-2">
+                                        <i class="fas fa-info-circle me-1"></i>
+                                        <?php if ($selected_day): ?>
+                                            Showing products added on <?= date('F j, Y', strtotime($selected_day)) ?> 
+                                            in <?= htmlspecialchars($periods[$selected_period_id]['period_name']) ?>
+                                        <?php else: ?>
+                                            Showing all products in <?= htmlspecialchars($periods[$selected_period_id]['period_name']) ?>
+                                            <?php if (!empty($available_days)): ?>
+                                                <span class="text-white-50">(<?= count($available_days) ?> days available)</span>
+                                            <?php endif; ?>
+                                        <?php endif; ?>
+                                    </div>
+                                <?php endif; ?>
                             </div>
                         </div>
                     </div>
@@ -943,7 +1012,11 @@ if (!$period_tracking_enabled) {
                                 </div>
                                 <p class="card-text mb-0">
                                     <?php if ($selected_period_id && isset($periods[$selected_period_id])): ?>
-                                        In <?= htmlspecialchars($periods[$selected_period_id]['period_name']) ?>
+                                        <?php if ($selected_day): ?>
+                                            On <?= date('M j, Y', strtotime($selected_day)) ?>
+                                        <?php else: ?>
+                                            In <?= htmlspecialchars($periods[$selected_period_id]['period_name']) ?>
+                                        <?php endif; ?>
                                     <?php else: ?>
                                         Across all users
                                     <?php endif; ?>
@@ -989,8 +1062,14 @@ if (!$period_tracking_enabled) {
                     <div class="col-md-3 mb-3">
                         <div class="card card-info h-100">
                             <div class="card-body">
-                                <h5 class="card-title">Users Summary</h5>
+                                <h5 class="card-title">Daily Summary</h5>
                                 <div class="period-summary">
+                                    <?php if ($selected_day): ?>
+                                        <div class="d-flex justify-content-between small mb-2">
+                                            <span>Selected Day:</span>
+                                            <strong><?= date('M j, Y', strtotime($selected_day)) ?></strong>
+                                        </div>
+                                    <?php endif; ?>
                                     <?php foreach ($products_by_user as $user => $count): ?>
                                         <div class="d-flex justify-content-between small mb-1">
                                             <span><?= htmlspecialchars($user) ?></span>
@@ -1011,7 +1090,12 @@ if (!$period_tracking_enabled) {
                                 <h5 class="mb-0">
                                     <i class="fas fa-boxes me-2"></i>
                                     <?php if ($selected_period_id && isset($periods[$selected_period_id])): ?>
-                                        Products in <?= htmlspecialchars($periods[$selected_period_id]['period_name']) ?>
+                                        <?php if ($selected_day): ?>
+                                            Products added on <?= date('F j, Y', strtotime($selected_day)) ?> 
+                                            (<?= htmlspecialchars($periods[$selected_period_id]['period_name']) ?>)
+                                        <?php else: ?>
+                                            Products in <?= htmlspecialchars($periods[$selected_period_id]['period_name']) ?>
+                                        <?php endif; ?>
                                     <?php else: ?>
                                         All Products (Admin View)
                                     <?php endif; ?>
@@ -1024,14 +1108,14 @@ if (!$period_tracking_enabled) {
                                         <?php endforeach; ?>
                                     </select>
                                     <?php if ($period_tracking_enabled && !empty($products_by_period)): ?>
-                                        <select id="periodFilter" class="form-select form-select-sm" style="max-width: 200px;">
+                                        <select id="periodFilter" class="form-select form-select-sm">
                                             <option value="">All Periods</option>
                                             <?php foreach (array_keys($products_by_period) as $period): ?>
                                                 <option value="<?= htmlspecialchars($period) ?>"><?= htmlspecialchars($period) ?></option>
                                             <?php endforeach; ?>
                                         </select>
                                     <?php endif; ?>
-                                    <input type="text" id="searchProducts" class="form-control form-control-sm" placeholder="Search products..." style="max-width: 200px;">
+                                    <input type="text" id="searchProducts" class="form-control form-control-sm" placeholder="Search products...">
                                 </div>
                             </div>
                             <div class="card-body">
@@ -1050,6 +1134,7 @@ if (!$period_tracking_enabled) {
                                                     <th>Cost Price</th>
                                                     <th>Selling Price</th>
                                                     <th>Stock</th>
+                                                    <th>Added Date</th>
                                                     <th>Status</th>
                                                     <th>Actions</th>
                                                 </tr>
@@ -1061,6 +1146,7 @@ if (!$period_tracking_enabled) {
                                                     $profit_margin = $product['selling_price'] - $product['cost_price'];
                                                     $margin_percentage = $product['cost_price'] > 0 ? ($profit_margin / $product['cost_price']) * 100 : 0;
                                                     $category_name = $categories[$product['category_id']] ?? 'Unknown Category';
+                                                    $added_day = $product['added_day'] ? date('M j, Y', strtotime($product['added_day'])) : 'Not recorded';
                                                 ?>
                                                     <tr class="<?= $is_low_stock ? 'table-warning' : '' ?> <?= $is_locked ? 'table-secondary' : '' ?>" 
                                                         data-user="<?= $product['created_by'] ?>"
@@ -1120,7 +1206,7 @@ if (!$period_tracking_enabled) {
                                                             <br><small class="text-muted"><?= number_format($margin_percentage, 1) ?>% margin</small>
                                                         </td>
                                                         <td>
-                                                            <div class="progress mb-1" style="height: 8px;">
+                                                            <div class="progress mb-1">
                                                                 <?php 
                                                                 $max_stock = max($product['stock_quantity'], $product['min_stock'] * 2);
                                                                 $progress = $max_stock > 0 ? ($product['stock_quantity'] / $max_stock) * 100 : 0;
@@ -1134,6 +1220,12 @@ if (!$period_tracking_enabled) {
                                                                 </span>
                                                                 <small class="text-muted">min: <?= $product['min_stock'] ?></small>
                                                             </div>
+                                                        </td>
+                                                        <td>
+                                                            <span class="badge bg-light text-dark">
+                                                                <i class="fas fa-calendar-day me-1"></i>
+                                                                <?= $added_day ?>
+                                                            </span>
                                                         </td>
                                                         <td>
                                                             <?php if ($is_locked): ?>
@@ -1177,7 +1269,9 @@ if (!$period_tracking_enabled) {
                                         <i class="fas fa-box-open fa-4x text-muted mb-3"></i>
                                         <h4 class="text-muted">No Products Found</h4>
                                         <p class="text-muted">
-                                            <?php if ($selected_period_id): ?>
+                                            <?php if ($selected_period_id && $selected_day): ?>
+                                                No products found for the selected day in this period.
+                                            <?php elseif ($selected_period_id): ?>
                                                 No products found for the selected period.
                                             <?php else: ?>
                                                 No products have been added by any users yet.
@@ -1594,39 +1688,50 @@ if (!$period_tracking_enabled) {
             }
         }
 
-        // Category modal handling - FIXED VERSION
+        // Enable/disable day selector based on period selection
+        const periodSelector = document.getElementById('periodSelector');
+        const daySelector = document.getElementById('daySelector');
+        
+        if (periodSelector && daySelector) {
+            periodSelector.addEventListener('change', function() {
+                if (this.value) {
+                    daySelector.disabled = false;
+                } else {
+                    daySelector.disabled = true;
+                    daySelector.value = '';
+                    // Submit form when period is cleared
+                    if (window.location.search.includes('day=')) {
+                        const form = this.closest('form');
+                        if (form) form.submit();
+                    }
+                }
+            });
+        }
+
+        // Category modal handling
         document.addEventListener('DOMContentLoaded', function() {
             const categoryModal = document.getElementById('categoryModal');
             const addCategoryForm = document.getElementById('addCategoryForm');
             
             if (categoryModal) {
-                // Only refresh if form was submitted successfully
                 categoryModal.addEventListener('hidden.bs.modal', function (event) {
-                    // Check if the modal was hidden due to form submission
                     if (categoryModal.dataset.submitted === 'true') {
-                        // Clear the flag
                         delete categoryModal.dataset.submitted;
-                        // Reload to update categories dropdown
                         window.location.reload();
                     }
                 });
                 
-                // Handle form submission
                 if (addCategoryForm) {
                     addCategoryForm.addEventListener('submit', function(e) {
-                        // Set flag to indicate form was submitted
                         categoryModal.dataset.submitted = 'true';
                     });
                 }
                 
-                // Reset form when modal is shown
                 categoryModal.addEventListener('show.bs.modal', function() {
-                    // Clear any existing submitted flag
                     delete categoryModal.dataset.submitted;
                 });
             }
             
-            // Handle close buttons
             const closeButtons = document.querySelectorAll('[data-bs-dismiss="modal"]');
             closeButtons.forEach(button => {
                 button.addEventListener('click', function() {

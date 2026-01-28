@@ -69,8 +69,6 @@ function calculateDaysBetween($startDate, $endDate) {
     SECURITY FUNCTIONS
 -----------------------------*/
 
-
-
 // Rate limiting check for report generation
 if (!checkRateLimit('period_summary_report', 10, 60)) {
     securityLog("Rate limit exceeded for period summary report", 'WARNING', $_SESSION['user_id']);
@@ -133,6 +131,9 @@ $allowed_stock_filters = ['all', 'healthy', 'low', 'out'];
 if (!in_array($stock_filter, $allowed_stock_filters)) {
     $stock_filter = 'all';
 }
+
+// Sort parameter
+$sort_by = isset($_GET['sort']) ? sanitizeInput($_GET['sort']) : 'revenue_desc';
 
 // ===== EXPORT FUNCTIONALITY (OPTIMIZED) =====
 if ($export_format && $selected_period_id) {
@@ -209,31 +210,35 @@ if ($export_format && $selected_period_id) {
             $aggregated_data[$row['id']] = $row;
         }
         
-        // Get sales aggregated data
-        $sales_sql = "SELECT 
+        // Get sales data with revenue for export
+        $sales_revenue_sql = "SELECT 
             ti.product_id,
-            SUM(ti.quantity) as sold_quantity
+            SUM(ti.quantity) as sold_quantity,
+            SUM(ti.total_price) as revenue
         FROM transaction_items ti
         JOIN transactions t ON ti.transaction_id = t.id
         WHERE t.time_period_id = ?
         GROUP BY ti.product_id";
         
-        logQuery($sales_sql);
-        $sales_stmt = prepareStatement($db, $sales_sql, [$selected_period_id], "i");
+        logQuery($sales_revenue_sql);
+        $sales_revenue_stmt = prepareStatement($db, $sales_revenue_sql, [$selected_period_id], "i");
         
-        if (!$sales_stmt) {
-            securityLog("Failed to prepare sales statement for export", 'ERROR', $user_id);
+        if (!$sales_revenue_stmt) {
+            securityLog("Failed to prepare sales revenue statement for export", 'ERROR', $user_id);
             die("Database error occurred");
         }
         
-        $sales_stmt->execute();
-        $sales_result = $sales_stmt->get_result();
-        $sales_data = [];
-        while ($row = $sales_result->fetch_assoc()) {
-            $sales_data[$row['product_id']] = $row['sold_quantity'];
+        $sales_revenue_stmt->execute();
+        $sales_revenue_result = $sales_revenue_stmt->get_result();
+        $revenue_data = [];
+        while ($row = $sales_revenue_result->fetch_assoc()) {
+            $revenue_data[$row['product_id']] = [
+                'sold_quantity' => $row['sold_quantity'],
+                'revenue' => $row['revenue']
+            ];
         }
         
-        // Now get products with pagination for memory efficiency
+        // Now get products with pagination for memory efficiency - SORTED BY REVENUE
         $product_sql = "SELECT 
             p.id,
             p.name,
@@ -247,7 +252,12 @@ if ($export_format && $selected_period_id) {
         LEFT JOIN categories c ON p.category_id = c.id
         WHERE p.period_id = ?
         AND p.is_active = 1
-        ORDER BY p.name
+        ORDER BY (
+            SELECT COALESCE(SUM(ti.total_price), 0)
+            FROM transaction_items ti
+            JOIN transactions t ON ti.transaction_id = t.id
+            WHERE ti.product_id = p.id AND t.time_period_id = p.period_id
+        ) DESC, p.name
         LIMIT 10000"; // Max 10,000 for export
         
         logQuery($product_sql);
@@ -264,21 +274,24 @@ if ($export_format && $selected_period_id) {
         // Output headers for CSV
         $output = fopen('php://output', 'w');
         
-        // CSV header
+        // CSV header with revenue column
         fputcsv($output, [
             'Product ID', 'Product Name', 'SKU', 'Category', 
             'Cost Price', 'Selling Price', 'Starting Stock',
             'Stock Added', 'Stock Removed', 'Sold', 
-            'Current Stock', 'Min Stock', 'Status'
+            'Revenue', 'Current Stock', 'Min Stock', 'Status'
         ]);
         
         // Stream data row by row to avoid memory issues
         $row_count = 0;
+        $total_revenue = 0;
         while ($product = $product_result->fetch_assoc()) {
             $product_id = $product['id'];
             $stock_added = $aggregated_data[$product_id]['stock_added'] ?? 0;
             $stock_removed = $aggregated_data[$product_id]['stock_removed'] ?? 0;
-            $sold = $sales_data[$product_id] ?? 0;
+            $sold = $revenue_data[$product_id]['sold_quantity'] ?? 0;
+            $revenue = $revenue_data[$product_id]['revenue'] ?? 0;
+            $total_revenue += $revenue;
             
             $starting_stock = ($product['current_stock'] + $stock_removed) - $stock_added + $sold;
             
@@ -300,6 +313,7 @@ if ($export_format && $selected_period_id) {
                 $stock_added,
                 $stock_removed,
                 $sold,
+                number_format($revenue, 2),
                 $product['current_stock'],
                 $product['min_stock'],
                 $status
@@ -313,8 +327,14 @@ if ($export_format && $selected_period_id) {
             }
         }
         
+        // Add total revenue row
+        if ($row_count > 0) {
+            fputcsv($output, []);
+            fputcsv($output, ['', '', '', '', '', '', '', '', '', 'TOTAL REVENUE:', number_format($total_revenue, 2), '', '', '']);
+        }
+        
         fclose($output);
-        securityLog("Exported period summary for period ID: $selected_period_id with $row_count rows", 'INFO', $user_id);
+        securityLog("Exported period summary for period ID: $selected_period_id with $row_count rows (Total Revenue: $total_revenue)", 'INFO', $user_id);
         exit();
     }
     
@@ -359,6 +379,7 @@ $product_details = [];
 $monthly_data = [];
 $total_products = 0;
 $total_pages = 0;
+$total_revenue_for_period = 0;
 
 if ($selected_period_id) {
     // 1. Get period basic info
@@ -386,6 +407,7 @@ if ($selected_period_id) {
                 'updates' => ['products_updated' => 0, 'stock_added' => 0, 'stock_removed' => 0, 'total_updates' => 0],
                 'sales' => ['products_sold' => 0, 'total_quantity_sold' => 0, 'total_sales_value' => 0, 'total_transactions' => 0],
                 'current_stock' => ['active_products' => 0, 'current_stock' => 0, 'stock_value' => 0, 'low_stock_items' => 0, 'out_of_stock_items' => 0],
+                'revenue_summary' => ['total_revenue' => 0, 'avg_revenue_per_product' => 0, 'top_product_revenue' => 0],
                 'transaction_breakdown' => [],
                 'category_sales' => [],
                 'top_products' => [],
@@ -489,7 +511,7 @@ if ($selected_period_id) {
                 }
             }
             
-            // 4. Sales data
+            // 4. Sales data with revenue
             $sales_sql = "SELECT 
                 COUNT(DISTINCT ti.product_id) as products_sold,
                 SUM(ti.quantity) as total_quantity_sold,
@@ -514,6 +536,7 @@ if ($selected_period_id) {
                             'total_sales_value' => $sales_data['total_sales_value'] ?? 0,
                             'total_transactions' => $sales_data['total_transactions'] ?? 0
                         ];
+                        $total_revenue_for_period = $sales_data['total_sales_value'] ?? 0;
                     }
                 }
             }
@@ -598,28 +621,42 @@ if ($selected_period_id) {
                 }
             }
             
-            // OPTIMIZED: Get sales data in bulk
-            $sales_aggregate_sql = "SELECT 
+            // OPTIMIZED: Get sales data with revenue in bulk
+            $sales_revenue_sql = "SELECT 
                 ti.product_id,
-                SUM(ti.quantity) as sold_quantity
+                SUM(ti.quantity) as sold_quantity,
+                SUM(ti.total_price) as revenue
             FROM transaction_items ti
             JOIN transactions t ON ti.transaction_id = t.id
             WHERE t.time_period_id = ?
             GROUP BY ti.product_id";
             
-            logQuery($sales_aggregate_sql);
-            $sales_aggregate_stmt = prepareStatement($db, $sales_aggregate_sql, [$selected_period_id], "i");
+            logQuery($sales_revenue_sql);
+            $sales_revenue_stmt = prepareStatement($db, $sales_revenue_sql, [$selected_period_id], "i");
             
-            if ($sales_aggregate_stmt) {
-                $sales_aggregate_stmt->execute();
-                $sales_aggregate_result = $sales_aggregate_stmt->get_result();
-                $sales_aggregate_data = [];
-                while ($row = $sales_aggregate_result->fetch_assoc()) {
-                    $sales_aggregate_data[$row['product_id']] = $row['sold_quantity'];
+            if ($sales_revenue_stmt) {
+                $sales_revenue_stmt->execute();
+                $sales_revenue_result = $sales_revenue_stmt->get_result();
+                $sales_revenue_data = [];
+                while ($row = $sales_revenue_result->fetch_assoc()) {
+                    $sales_revenue_data[$row['product_id']] = [
+                        'sold_quantity' => $row['sold_quantity'],
+                        'revenue' => $row['revenue']
+                    ];
                 }
             }
             
-            // 6. Get paginated product details with aggregated data
+            // Calculate revenue summary
+            if (!empty($sales_revenue_data)) {
+                $revenues = array_column($sales_revenue_data, 'revenue');
+                $summary_data['revenue_summary'] = [
+                    'total_revenue' => array_sum($revenues),
+                    'avg_revenue_per_product' => array_sum($revenues) / count($revenues),
+                    'top_product_revenue' => max($revenues)
+                ];
+            }
+            
+            // 6. Get paginated product details with aggregated data - SORTED BY REVENUE
             $product_details_sql = "SELECT 
                 p.id,
                 p.name,
@@ -654,7 +691,49 @@ if ($selected_period_id) {
                 $product_details_sql .= " AND p.stock_quantity > p.min_stock";
             }
             
-            $product_details_sql .= " ORDER BY p.name LIMIT ? OFFSET ?";
+            // Determine sorting order based on parameter
+            $sort_order = '';
+            switch ($sort_by) {
+                case 'revenue_desc':
+                    $sort_order = "ORDER BY COALESCE((
+                        SELECT SUM(ti.total_price)
+                        FROM transaction_items ti
+                        JOIN transactions t ON ti.transaction_id = t.id
+                        WHERE ti.product_id = p.id AND t.time_period_id = p.period_id
+                    ), 0) DESC, p.name";
+                    break;
+                case 'revenue_asc':
+                    $sort_order = "ORDER BY COALESCE((
+                        SELECT SUM(ti.total_price)
+                        FROM transaction_items ti
+                        JOIN transactions t ON ti.transaction_id = t.id
+                        WHERE ti.product_id = p.id AND t.time_period_id = p.period_id
+                    ), 0) ASC, p.name";
+                    break;
+                case 'sold_desc':
+                    $sort_order = "ORDER BY COALESCE((
+                        SELECT SUM(ti.quantity)
+                        FROM transaction_items ti
+                        JOIN transactions t ON ti.transaction_id = t.id
+                        WHERE ti.product_id = p.id AND t.time_period_id = p.period_id
+                    ), 0) DESC, p.name";
+                    break;
+                case 'name_asc':
+                    $sort_order = "ORDER BY p.name ASC";
+                    break;
+                case 'name_desc':
+                    $sort_order = "ORDER BY p.name DESC";
+                    break;
+                default:
+                    $sort_order = "ORDER BY COALESCE((
+                        SELECT SUM(ti.total_price)
+                        FROM transaction_items ti
+                        JOIN transactions t ON ti.transaction_id = t.id
+                        WHERE ti.product_id = p.id AND t.time_period_id = p.period_id
+                    ), 0) DESC, p.name";
+            }
+            
+            $product_details_sql .= " " . $sort_order . " LIMIT ? OFFSET ?";
             
             logQuery($product_details_sql);
             $product_details_stmt = $db->prepare($product_details_sql);
@@ -687,24 +766,26 @@ if ($selected_period_id) {
                         $product_id = $product['id'];
                         $product['stock_added_during_period'] = $aggregate_data[$product_id]['stock_added'] ?? 0;
                         $product['stock_removed_during_period'] = $aggregate_data[$product_id]['stock_removed'] ?? 0;
-                        $product['sold_this_period'] = $sales_aggregate_data[$product_id] ?? 0;
+                        $product['sold_this_period'] = $sales_revenue_data[$product_id]['sold_quantity'] ?? 0;
+                        $product['revenue_this_period'] = $sales_revenue_data[$product_id]['revenue'] ?? 0;
                     }
                     unset($product); // Break reference
                 }
             }
             
-            // 7. Top selling products (cached query)
+            // 7. Top selling products with revenue
             $top_products_sql = "SELECT 
                 p.name as product_name,
                 p.sku,
                 SUM(ti.quantity) as total_sold,
-                SUM(ti.total_price) as total_value
+                SUM(ti.total_price) as total_revenue,
+                ROUND(AVG(ti.unit_price), 2) as avg_price
             FROM transaction_items ti
             JOIN transactions t ON ti.transaction_id = t.id
             JOIN products p ON ti.product_id = p.id
             WHERE t.time_period_id = ?
             GROUP BY p.id, p.name, p.sku
-            ORDER BY total_sold DESC
+            ORDER BY total_revenue DESC
             LIMIT 10";
             
             logQuery($top_products_sql);
@@ -718,7 +799,7 @@ if ($selected_period_id) {
                 }
             }
             
-            // 8. Category sales (cached)
+            // 8. Category sales with revenue
             $category_sales_sql = "SELECT 
                 c.name as category_name,
                 COUNT(DISTINCT ti.product_id) as products_sold,
@@ -744,7 +825,7 @@ if ($selected_period_id) {
                 }
             }
             
-            // 9. Monthly data
+            // 9. Monthly data with revenue
             $monthly_sql = "SELECT 
                 tp.month,
                 tp.period_name,
@@ -774,7 +855,7 @@ if ($selected_period_id) {
             // Calculate performance metrics
             $end_time = microtime(true);
             $execution_time = round($end_time - $start_time, 3);
-            securityLog("Period Summary loaded in {$execution_time}s with {$query_count} queries for {$total_products} products", 'INFO', $user_id);
+            securityLog("Period Summary loaded in {$execution_time}s with {$query_count} queries for {$total_products} products (Revenue: {$total_revenue_for_period})", 'INFO', $user_id);
         }
     }
 }
@@ -804,6 +885,7 @@ header("Cache-Control: private, max-age=300, stale-while-revalidate=60");
     
     <!-- DataTables for better table performance -->
     <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css">
+    
 </head>
 <body>
     <?php include 'nav_bar.php'; ?>
@@ -820,7 +902,7 @@ header("Cache-Control: private, max-age=300, stale-while-revalidate=60");
                             <i class="fas fa-chart-bar me-2"></i>Period Summary Report
                         </h1>
                         <p class="lead mb-0">
-                            Track product additions, updates, sales, and inventory per period
+                            Track product performance, sales, and revenue per period
                             <?php if ($selected_period_id && $period_info): ?>
                                 - <strong><?= htmlspecialchars($period_info['period_name'] ?? 'Unnamed Period') ?></strong>
                             <?php endif; ?>
@@ -829,6 +911,9 @@ header("Cache-Control: private, max-age=300, stale-while-revalidate=60");
                             <div class="text-muted small">
                                 Showing <?= number_format($total_products) ?> total products • 
                                 Page <?= $page ?> of <?= $total_pages ?>
+                                <?php if ($total_revenue_for_period > 0): ?>
+                                    • Total Revenue: <span class="text-success fw-bold">KSH <?= number_format($total_revenue_for_period, 2) ?></span>
+                                <?php endif; ?>
                             </div>
                         <?php endif; ?>
                     </div>
@@ -860,12 +945,38 @@ header("Cache-Control: private, max-age=300, stale-while-revalidate=60");
                     <div class="mt-3">Loading report data...</div>
                 </div>
 
+                <!-- Total Revenue Banner -->
+                <?php if ($selected_period_id && $total_revenue_for_period > 0): ?>
+                <div class="total-revenue-banner">
+                    <div class="row align-items-center">
+                        <div class="col-md-8">
+                            <h3 class="mb-2">
+                                <i class="fas fa-trophy me-2"></i>
+                                Revenue Performance - <?= htmlspecialchars($period_info['period_name'] ?? 'Period') ?>
+                            </h3>
+                            <p class="mb-0">
+                                <i class="fas fa-chart-line me-1"></i>
+                                Products sorted by revenue generated (Highest to Lowest)
+                            </p>
+                        </div>
+                        <div class="col-md-4 text-end">
+                            <div class="display-4 fw-bold">KSH <?= number_format($total_revenue_for_period, 2) ?></div>
+                            <p class="mb-0">
+                                <i class="fas fa-shopping-cart me-1"></i>
+                                <?= number_format($summary_data['sales']['total_quantity_sold'] ?? 0) ?> units sold
+                            </p>
+                        </div>
+                    </div>
+                </div>
+                <?php endif; ?>
+
                 <!-- Filter Controls -->
                 <div class="card mb-4">
                     <div class="card-body">
                         <form method="GET" class="row align-items-end" id="filterForm">
                             <input type="hidden" name="page" value="1">
                             <input type="hidden" name="csrf_token" value="<?= $csrf_token ?>">
+                            <input type="hidden" name="sort" value="<?= $sort_by ?>" id="sortInput">
                             
                             <div class="col-md-3 mb-3">
                                 <label class="form-label fw-bold">Select Year</label>
@@ -1081,7 +1192,7 @@ header("Cache-Control: private, max-age=300, stale-while-revalidate=60");
                                     </div>
                                     <div class="summary-label">Products Sold</div>
                                     <p class="small text-muted mt-2 mb-0">
-                                        KSH <?= number_format($summary_data['sales']['total_sales_value'] ?? 0, 2) ?> value
+                                        <?= number_format($summary_data['sales']['total_quantity_sold'] ?? 0) ?> units
                                     </p>
                                 </div>
                             </div>
@@ -1102,6 +1213,117 @@ header("Cache-Control: private, max-age=300, stale-while-revalidate=60");
                                     </p>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+
+                    <!-- Revenue Breakdown -->
+                    <?php if ($total_revenue_for_period > 0): ?>
+                    <div class="revenue-breakdown mb-4">
+                        <h5 class="mb-3">
+                            <i class="fas fa-trophy me-2"></i>Performance Breakdown
+                        </h5>
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="revenue-item">
+                                    <span class="revenue-item-label">Total Revenue</span>
+                                    <span class="revenue-item-value">KSH <?= number_format($total_revenue_for_period, 2) ?></span>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="revenue-item">
+                                    <span class="revenue-item-label">Products Generating Revenue</span>
+                                    <span class="revenue-item-value avg-revenue"><?= 
+                                        number_format(
+                                            count(array_filter($sales_revenue_data ?? [], function($item) {
+                                                return ($item['revenue'] ?? 0) > 0;
+                                            }))
+                                        ) 
+                                    ?> / <?= number_format($total_products) ?></span>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="revenue-item">
+                                    <span class="revenue-item-label">Top Product Revenue</span>
+                                    <span class="revenue-item-value top-revenue">KSH <?= 
+                                        number_format(
+                                            $summary_data['revenue_summary']['top_product_revenue'] ?? 0, 
+                                            2
+                                        ) 
+                                    ?></span>
+                                </div>
+                            </div>
+                        </div>
+                        <?php if (!empty($summary_data['top_products'])): ?>
+                        <div class="mt-3">
+                            <h6 class="mb-2">Top 5 Performing Products:</h6>
+                            <div class="d-flex flex-wrap gap-2">
+                                <?php 
+                                $top_5 = array_slice($summary_data['top_products'], 0, 5);
+                                $rank = 1;
+                                foreach ($top_5 as $product): 
+                                    $rank_class = $rank == 1 ? 'bg-warning text-dark' : 
+                                                 ($rank == 2 ? 'bg-secondary text-white' : 
+                                                 ($rank == 3 ? 'bg-danger text-white' : 'bg-info text-white'));
+                                ?>
+                                    <span class="badge <?= $rank_class ?>">
+                                        <?= $rank ?>. <?= htmlspecialchars(substr($product['product_name'] ?? 'Unknown', 0, 20)) ?> 
+                                        (KSH <?= number_format($product['total_revenue'] ?? 0, 0) ?>)
+                                    </span>
+                                <?php 
+                                $rank++;
+                                endforeach; 
+                                ?>
+                            </div>
+                        </div>
+                        <?php endif; ?>
+                    </div>
+                    <?php endif; ?>
+
+                    <!-- Sort Controls -->
+                    <div class="sort-controls">
+                        <div class="d-flex align-items-center">
+                            <span class="me-3 fw-bold">
+                                <i class="fas fa-sort-amount-down me-2"></i>Sort Products By:
+                            </span>
+                            <div class="btn-group btn-group-sm me-3" role="group">
+                                <button type="button" class="btn btn-outline-primary sort-btn <?= $sort_by === 'revenue_desc' ? 'active' : '' ?>" 
+                                        data-sort="revenue_desc" onclick="setSort('revenue_desc')">
+                                    <i class="fas fa-money-bill-wave me-1"></i>Revenue (High to Low)
+                                </button>
+                                <button type="button" class="btn btn-outline-primary sort-btn <?= $sort_by === 'revenue_asc' ? 'active' : '' ?>" 
+                                        data-sort="revenue_asc" onclick="setSort('revenue_asc')">
+                                    <i class="fas fa-money-bill-wave me-1"></i>Revenue (Low to High)
+                                </button>
+                            </div>
+                            <div class="btn-group btn-group-sm me-3" role="group">
+                                <button type="button" class="btn btn-outline-info sort-btn <?= $sort_by === 'sold_desc' ? 'active' : '' ?>" 
+                                        data-sort="sold_desc" onclick="setSort('sold_desc')">
+                                    <i class="fas fa-shopping-cart me-1"></i>Units Sold (High to Low)
+                                </button>
+                            </div>
+                            <div class="btn-group btn-group-sm" role="group">
+                                <button type="button" class="btn btn-outline-secondary sort-btn <?= $sort_by === 'name_asc' ? 'active' : '' ?>" 
+                                        data-sort="name_asc" onclick="setSort('name_asc')">
+                                    <i class="fas fa-sort-alpha-down me-1"></i>Name A-Z
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary sort-btn <?= $sort_by === 'name_desc' ? 'active' : '' ?>" 
+                                        data-sort="name_desc" onclick="setSort('name_desc')">
+                                    <i class="fas fa-sort-alpha-down-alt me-1"></i>Name Z-A
+                                </button>
+                            </div>
+                        </div>
+                        <div class="mt-2 text-muted small">
+                            <?php if ($sort_by === 'revenue_desc'): ?>
+                                <i class="fas fa-info-circle me-1"></i>Currently showing best performing products first (highest revenue)
+                            <?php elseif ($sort_by === 'revenue_asc'): ?>
+                                <i class="fas fa-info-circle me-1"></i>Currently showing lowest revenue products first
+                            <?php elseif ($sort_by === 'sold_desc'): ?>
+                                <i class="fas fa-info-circle me-1"></i>Currently showing products by units sold (highest first)
+                            <?php elseif ($sort_by === 'name_asc'): ?>
+                                <i class="fas fa-info-circle me-1"></i>Currently showing products alphabetically A-Z
+                            <?php elseif ($sort_by === 'name_desc'): ?>
+                                <i class="fas fa-info-circle me-1"></i>Currently showing products alphabetically Z-A
+                            <?php endif; ?>
                         </div>
                     </div>
 
@@ -1179,12 +1401,12 @@ header("Cache-Control: private, max-age=300, stale-while-revalidate=60");
                             </div>
                         </div>
                         
-                        <!-- Sales Summary Card -->
+                        <!-- Revenue Summary Card -->
                         <div class="col-md-4 mb-3">
                             <div class="card h-100">
                                 <div class="card-header">
                                     <h5 class="mb-0">
-                                        <i class="fas fa-money-bill-wave me-2"></i>Sales Summary
+                                        <i class="fas fa-chart-line me-2"></i>Revenue Summary
                                     </h5>
                                 </div>
                                 <div class="card-body">
@@ -1201,9 +1423,13 @@ header("Cache-Control: private, max-age=300, stale-while-revalidate=60");
                                         </div>
                                     </div>
                                     <div class="stat-detail-card border-left-info">
-                                        <div class="stat-detail-label">Avg. Transaction</div>
+                                        <div class="stat-detail-label">Avg. Price per Unit</div>
                                         <div class="stat-detail-value text-info">
-                                            KSH <?= number_format(($summary_data['sales']['total_sales_value'] ?? 0) / max(1, ($summary_data['sales']['total_transactions'] ?? 1)), 2) ?>
+                                            KSH <?= 
+                                                ($summary_data['sales']['total_quantity_sold'] ?? 0) > 0 
+                                                ? number_format(($summary_data['sales']['total_sales_value'] ?? 0) / ($summary_data['sales']['total_quantity_sold'] ?? 1), 2)
+                                                : '0.00'
+                                            ?>
                                         </div>
                                     </div>
                                 </div>
@@ -1211,11 +1437,19 @@ header("Cache-Control: private, max-age=300, stale-while-revalidate=60");
                         </div>
                     </div>
 
-                    <!-- Product Details Table with Pagination -->
+                    <!-- Product Details Table with Pagination - Sorted by Revenue -->
                     <div class="card mb-4">
                         <div class="card-header d-flex justify-content-between align-items-center">
                             <h5 class="mb-0">
-                                <i class="fas fa-boxes me-2"></i>Product Details - <?= htmlspecialchars($period_info['period_name'] ?? 'Unnamed Period') ?>
+                                <i class="fas fa-trophy me-2"></i>Product Performance - Sorted by Revenue
+                                <span class="badge bg-success ms-2">
+                                    <?= 
+                                        $sort_by === 'revenue_desc' ? 'Highest to Lowest' : 
+                                        ($sort_by === 'revenue_asc' ? 'Lowest to Highest' : 
+                                        ($sort_by === 'sold_desc' ? 'By Units Sold' : 
+                                        ($sort_by === 'name_asc' ? 'A-Z' : 'Z-A')))
+                                    ?>
+                                </span>
                             </h5>
                             <div class="export-btn-group">
                                 <span class="badge bg-light text-dark">
@@ -1228,16 +1462,18 @@ header("Cache-Control: private, max-age=300, stale-while-revalidate=60");
                                 <table class="table table-hover data-table mb-0 table-fixed-layout" id="productsTable">
                                     <thead class="table-light">
                                         <tr>
-                                            <th width="25%">Product</th>
-                                            <th width="10%">SKU</th>
-                                            <th width="10%">Category</th>
-                                            <th width="8%">Start Stock</th>
-                                            <th width="8%">Added</th>
-                                            <th width="8%">Removed</th>
-                                            <th width="8%">Sold</th>
-                                            <th width="8%">Current</th>
-                                            <th width="8%">Status</th>
-                                            <th width="7%">Progress</th>
+                                            <th width="5%" class="text-center">Rank</th>
+                                            <th width="20%">Product</th>
+                                            <th width="8%">SKU</th>
+                                            <th width="8%">Category</th>
+                                            <th width="7%">Start Stock</th>
+                                            <th width="7%">Added</th>
+                                            <th width="7%">Removed</th>
+                                            <th width="7%">Sold</th>
+                                            <th width="10%">Revenue</th>
+                                            <th width="7%">Current</th>
+                                            <th width="7%">Status</th>
+                                            <th width="7%">Performance</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -1248,10 +1484,16 @@ header("Cache-Control: private, max-age=300, stale-while-revalidate=60");
                                             9 => 'Sep', 10 => 'Oct', 11 => 'Nov', 12 => 'Dec'
                                         ];
                                         
+                                        $total_displayed_revenue = 0;
+                                        $global_rank = ($page - 1) * $per_page + 1;
+                                        
                                         foreach ($product_details as $product): 
                                             $stock_added = $product['stock_added_during_period'] ?? 0;
                                             $stock_removed = $product['stock_removed_during_period'] ?? 0;
                                             $sold = $product['sold_this_period'] ?? 0;
+                                            $revenue = $product['revenue_this_period'] ?? 0;
+                                            $total_displayed_revenue += $revenue;
+                                            
                                             $starting_stock = ($product['current_stock'] + $stock_removed) - $stock_added + $sold;
                                             
                                             // Calculate progress percentage
@@ -1272,12 +1514,58 @@ header("Cache-Control: private, max-age=300, stale-while-revalidate=60");
                                                 $status_class = 'status-in-stock';
                                                 $progress_class = $progress < 50 ? 'bg-info' : 'bg-success';
                                             }
+                                            
+                                            // Determine revenue color class
+                                            $revenue_class = '';
+                                            $performance_badge = '';
+                                            if ($revenue > 0) {
+                                                if ($revenue >= 10000) {
+                                                    $revenue_class = 'text-success fw-bold';
+                                                    $performance_badge = 'performance-excellent';
+                                                    $performance_text = 'Excellent';
+                                                } elseif ($revenue >= 5000) {
+                                                    $revenue_class = 'text-primary';
+                                                    $performance_badge = 'performance-good';
+                                                    $performance_text = 'Good';
+                                                } elseif ($revenue >= 1000) {
+                                                    $revenue_class = 'text-info';
+                                                    $performance_badge = 'performance-average';
+                                                    $performance_text = 'Average';
+                                                } else {
+                                                    $revenue_class = 'text-muted';
+                                                    $performance_badge = 'performance-poor';
+                                                    $performance_text = 'Poor';
+                                                }
+                                            } else {
+                                                $revenue_class = 'text-muted';
+                                                $performance_badge = 'performance-none';
+                                                $performance_text = 'No Sales';
+                                            }
+                                            
+                                            // Determine rank class
+                                            $rank_class = '';
+                                            if ($global_rank == 1) {
+                                                $rank_class = 'rank-1';
+                                            } elseif ($global_rank == 2) {
+                                                $rank_class = 'rank-2';
+                                            } elseif ($global_rank == 3) {
+                                                $rank_class = 'rank-3';
+                                            } else {
+                                                $rank_class = 'rank-other';
+                                            }
                                         ?>
-                                            <tr>
+                                            <tr class="<?= $revenue > 0 ? 'revenue-highlight' : '' ?>">
+                                                <td class="text-center revenue-rank <?= $rank_class ?>">
+                                                    <?= $global_rank ?>
+                                                </td>
                                                 <td class="nowrap">
                                                     <div class="d-flex align-items-center">
                                                         <div class="product-icon product-icon-sm bg-primary text-white rounded-circle d-flex align-items-center justify-content-center me-2">
-                                                            <i class="fas fa-box"></i>
+                                                            <?php if ($global_rank <= 3): ?>
+                                                                <i class="fas fa-trophy"></i>
+                                                            <?php else: ?>
+                                                                <i class="fas fa-box"></i>
+                                                            <?php endif; ?>
                                                         </div>
                                                         <div>
                                                             <strong class="d-block text-truncate product-name-truncate" title="<?= htmlspecialchars($product['name'] ?? 'Unknown Product', ENT_QUOTES, 'UTF-8') ?>">
@@ -1285,6 +1573,7 @@ header("Cache-Control: private, max-age=300, stale-while-revalidate=60");
                                                             </strong>
                                                             <small class="text-muted d-block">
                                                                 Cost: KSH <?= number_format($product['cost_price'] ?? 0, 2) ?>
+                                                                | Price: KSH <?= number_format($product['selling_price'] ?? 0, 2) ?>
                                                             </small>
                                                         </div>
                                                     </div>
@@ -1311,10 +1600,24 @@ header("Cache-Control: private, max-age=300, stale-while-revalidate=60");
                                                 <td class="text-primary">
                                                     <i class="fas fa-shopping-cart me-1"></i><?= number_format($sold) ?>
                                                 </td>
+                                                <td class="<?= $revenue_class ?>">
+                                                    <?php if ($revenue > 0): ?>
+                                                        <div class="revenue-value">
+                                                            KSH <?= number_format($revenue, 2) ?>
+                                                        </div>
+                                                        <small class="text-muted d-block">
+                                                            Avg: KSH <?= number_format($sold > 0 ? ($revenue / $sold) : 0, 2) ?>
+                                                        </small>
+                                                    <?php else: ?>
+                                                        <span class="text-muted">KSH 0.00</span>
+                                                    <?php endif; ?>
+                                                </td>
                                                 <td>
                                                     <strong class="<?= ($product['current_stock'] ?? 0) == 0 ? 'text-danger' : (($product['current_stock'] ?? 0) <= ($product['min_stock'] ?? 0) ? 'text-warning' : 'text-success') ?>">
                                                         <?= number_format($product['current_stock'] ?? 0) ?>
                                                     </strong>
+                                                    <br>
+                                                    <small class="text-muted">Min: <?= number_format($product['min_stock'] ?? 0) ?></small>
                                                 </td>
                                                 <td>
                                                     <span class="product-status-badge <?= $status_class ?>">
@@ -1322,7 +1625,11 @@ header("Cache-Control: private, max-age=300, stale-while-revalidate=60");
                                                     </span>
                                                 </td>
                                                 <td>
-                                                    <div class="stock-progress">
+                                                    <span class="performance-badge <?= $performance_badge ?>">
+                                                        <?= $performance_text ?>
+                                                    </span>
+                                                    <?php if ($revenue > 0): ?>
+                                                    <div class="stock-progress mt-1">
                                                         <div class="progress stock-progress-bar">
                                                             <div class="progress-bar <?= $progress_class ?>" 
                                                                  style="width: <?= min($progress, 100) ?>%"
@@ -1333,14 +1640,21 @@ header("Cache-Control: private, max-age=300, stale-while-revalidate=60");
                                                                  title="<?= number_format($progress, 1) ?>%">
                                                             </div>
                                                         </div>
+                                                        <small class="text-muted d-block text-center">
+                                                            <?= number_format(min($progress, 100), 1) ?>%
+                                                        </small>
                                                     </div>
+                                                    <?php endif; ?>
                                                 </td>
                                             </tr>
-                                        <?php endforeach; ?>
+                                        <?php 
+                                        $global_rank++;
+                                        endforeach; 
+                                        ?>
                                         
                                         <?php if (empty($product_details)): ?>
                                             <tr>
-                                                <td colspan="10" class="text-center py-4">
+                                                <td colspan="12" class="text-center py-4">
                                                     <i class="fas fa-box-open fa-2x text-muted mb-3"></i>
                                                     <h5 class="text-muted">No products found</h5>
                                                     <p class="text-muted">
@@ -1354,6 +1668,28 @@ header("Cache-Control: private, max-age=300, stale-while-revalidate=60");
                                             </tr>
                                         <?php endif; ?>
                                     </tbody>
+                                    <?php if (!empty($product_details) && $total_displayed_revenue > 0): ?>
+                                    <tfoot class="table-light">
+                                        <tr>
+                                            <td colspan="8" class="text-end fw-bold">Total Revenue for Displayed Products:</td>
+                                            <td class="text-success fw-bold revenue-value">
+                                                KSH <?= number_format($total_displayed_revenue, 2) ?>
+                                            </td>
+                                            <td colspan="3"></td>
+                                        </tr>
+                                        <tr>
+                                            <td colspan="8" class="text-end fw-bold">Average Revenue per Product:</td>
+                                            <td class="text-info fw-bold">
+                                                KSH <?= 
+                                                    !empty($product_details) 
+                                                    ? number_format($total_displayed_revenue / count($product_details), 2)
+                                                    : '0.00'
+                                                ?>
+                                            </td>
+                                            <td colspan="3"></td>
+                                        </tr>
+                                    </tfoot>
+                                    <?php endif; ?>
                                 </table>
                             </div>
                             
@@ -1364,14 +1700,14 @@ header("Cache-Control: private, max-age=300, stale-while-revalidate=60");
                                     <ul class="pagination justify-content-center mb-0">
                                         <!-- First Page -->
                                         <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>">
-                                            <a class="page-link" href="?period_id=<?= $selected_period_id ?>&year=<?= $year_filter ?>&page=1&search=<?= urlencode($search) ?>&category=<?= $category_filter ?>&stock=<?= $stock_filter ?>&csrf_token=<?= $csrf_token ?>">
+                                            <a class="page-link" href="?period_id=<?= $selected_period_id ?>&year=<?= $year_filter ?>&page=1&search=<?= urlencode($search) ?>&category=<?= $category_filter ?>&stock=<?= $stock_filter ?>&sort=<?= $sort_by ?>&csrf_token=<?= $csrf_token ?>">
                                                 <i class="fas fa-angle-double-left"></i>
                                             </a>
                                         </li>
                                         
                                         <!-- Previous Page -->
                                         <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>">
-                                            <a class="page-link" href="?period_id=<?= $selected_period_id ?>&year=<?= $year_filter ?>&page=<?= $page - 1 ?>&search=<?= urlencode($search) ?>&category=<?= $category_filter ?>&stock=<?= $stock_filter ?>&csrf_token=<?= $csrf_token ?>">
+                                            <a class="page-link" href="?period_id=<?= $selected_period_id ?>&year=<?= $year_filter ?>&page=<?= $page - 1 ?>&search=<?= urlencode($search) ?>&category=<?= $category_filter ?>&stock=<?= $stock_filter ?>&sort=<?= $sort_by ?>&csrf_token=<?= $csrf_token ?>">
                                                 <i class="fas fa-angle-left"></i>
                                             </a>
                                         </li>
@@ -1387,7 +1723,7 @@ header("Cache-Control: private, max-age=300, stale-while-revalidate=60");
                                         
                                         for ($i = $start_page; $i <= $end_page; $i++): ?>
                                             <li class="page-item <?= $i == $page ? 'active' : '' ?>">
-                                                <a class="page-link" href="?period_id=<?= $selected_period_id ?>&year=<?= $year_filter ?>&page=<?= $i ?>&search=<?= urlencode($search) ?>&category=<?= $category_filter ?>&stock=<?= $stock_filter ?>&csrf_token=<?= $csrf_token ?>">
+                                                <a class="page-link" href="?period_id=<?= $selected_period_id ?>&year=<?= $year_filter ?>&page=<?= $i ?>&search=<?= urlencode($search) ?>&category=<?= $category_filter ?>&stock=<?= $stock_filter ?>&sort=<?= $sort_by ?>&csrf_token=<?= $csrf_token ?>">
                                                     <?= $i ?>
                                                 </a>
                                             </li>
@@ -1400,14 +1736,14 @@ header("Cache-Control: private, max-age=300, stale-while-revalidate=60");
                                         
                                         <!-- Next Page -->
                                         <li class="page-item <?= $page >= $total_pages ? 'disabled' : '' ?>">
-                                            <a class="page-link" href="?period_id=<?= $selected_period_id ?>&year=<?= $year_filter ?>&page=<?= $page + 1 ?>&search=<?= urlencode($search) ?>&category=<?= $category_filter ?>&stock=<?= $stock_filter ?>&csrf_token=<?= $csrf_token ?>">
+                                            <a class="page-link" href="?period_id=<?= $selected_period_id ?>&year=<?= $year_filter ?>&page=<?= $page + 1 ?>&search=<?= urlencode($search) ?>&category=<?= $category_filter ?>&stock=<?= $stock_filter ?>&sort=<?= $sort_by ?>&csrf_token=<?= $csrf_token ?>">
                                                 <i class="fas fa-angle-right"></i>
                                             </a>
                                         </li>
                                         
                                         <!-- Last Page -->
                                         <li class="page-item <?= $page >= $total_pages ? 'disabled' : '' ?>">
-                                            <a class="page-link" href="?period_id=<?= $selected_period_id ?>&year=<?= $year_filter ?>&page=<?= $total_pages ?>&search=<?= urlencode($search) ?>&category=<?= $category_filter ?>&stock=<?= $stock_filter ?>&csrf_token=<?= $csrf_token ?>">
+                                            <a class="page-link" href="?period_id=<?= $selected_period_id ?>&year=<?= $year_filter ?>&page=<?= $total_pages ?>&search=<?= urlencode($search) ?>&category=<?= $category_filter ?>&stock=<?= $stock_filter ?>&sort=<?= $sort_by ?>&csrf_token=<?= $csrf_token ?>">
                                                 <i class="fas fa-angle-double-right"></i>
                                             </a>
                                         </li>
@@ -1416,6 +1752,9 @@ header("Cache-Control: private, max-age=300, stale-while-revalidate=60");
                                         <small class="text-muted">
                                             Page <?= $page ?> of <?= $total_pages ?> • 
                                             <?= number_format($total_products) ?> total products
+                                            <?php if ($total_displayed_revenue > 0): ?>
+                                                • Revenue: <span class="text-success fw-bold">KSH <?= number_format($total_displayed_revenue, 2) ?></span>
+                                            <?php endif; ?>
                                         </small>
                                     </div>
                                 </nav>
@@ -1523,6 +1862,12 @@ CREATE INDEX idx_products_category ON products(category_id);
             document.getElementById('loadingOverlay').classList.remove('active');
         });
         
+        // Set sort function
+        window.setSort = function(sortType) {
+            document.getElementById('sortInput').value = sortType;
+            filterForm.submit();
+        }
+        
         // Initialize DataTables for better table performance
         const productsTable = document.getElementById('productsTable');
         if (productsTable && <?= count($product_details) ?> > 0) {
@@ -1530,7 +1875,7 @@ CREATE INDEX idx_products_category ON products(category_id);
             $(productsTable).DataTable({
                 pageLength: <?= $per_page ?>,
                 lengthMenu: [[25, 50, 100, -1], [25, 50, 100, 'All']],
-                order: [[0, 'asc']],
+                order: [[0, 'asc']], // Default sort by rank (column 0)
                 searching: false, // We have our own search
                 info: false, // We have our own pagination
                 paging: false, // We have our own pagination
@@ -1540,7 +1885,11 @@ CREATE INDEX idx_products_category ON products(category_id);
                 scrollCollapse: true,
                 deferRender: true, // Improves performance for large datasets
                 columnDefs: [
-                    { targets: '_all', orderable: true }
+                    { 
+                        targets: [7, 8], // Revenue and Sold columns
+                        orderable: false // Disable sorting as we handle it server-side
+                    },
+                    { targets: '_all', orderable: false }
                 ],
                 language: {
                     emptyTable: "No products found",
@@ -1568,7 +1917,7 @@ CREATE INDEX idx_products_category ON products(category_id);
                     // Show loading indicator
                     const loadingRow = document.createElement('tr');
                     loadingRow.innerHTML = `
-                        <td colspan="10" class="text-center py-3">
+                        <td colspan="12" class="text-center py-3">
                             <div class="spinner-border spinner-border-sm" role="status">
                                 <span class="visually-hidden">Loading more products...</span>
                             </div>
@@ -1578,7 +1927,7 @@ CREATE INDEX idx_products_category ON products(category_id);
                     tableBody.appendChild(loadingRow);
                     
                     // Load next page via AJAX
-                    fetch(`?period_id=<?= $selected_period_id ?>&year=<?= $year_filter ?>&page=${currentPage}&search=<?= urlencode($search) ?>&category=<?= $category_filter ?>&stock=<?= $stock_filter ?>&ajax=1`)
+                    fetch(`?period_id=<?= $selected_period_id ?>&year=<?= $year_filter ?>&page=${currentPage}&search=<?= urlencode($search) ?>&category=<?= $category_filter ?>&stock=<?= $stock_filter ?>&sort=<?= $sort_by ?>&ajax=1`)
                         .then(response => response.text())
                         .then(html => {
                             // Parse the HTML and extract table rows
@@ -1607,30 +1956,6 @@ CREATE INDEX idx_products_category ON products(category_id);
             });
         }
         
-        // Quick filter buttons
-        const quickFilterButtons = document.querySelectorAll('.quick-filter');
-        quickFilterButtons.forEach(button => {
-            button.addEventListener('click', function() {
-                const filterType = this.dataset.filter;
-                const filterForm = document.getElementById('filterForm');
-                
-                switch(filterType) {
-                    case 'low-stock':
-                        filterForm.querySelector('[name="stock"]').value = 'low';
-                        break;
-                    case 'out-of-stock':
-                        filterForm.querySelector('[name="stock"]').value = 'out';
-                        break;
-                    case 'high-value':
-                        // This would require custom sorting
-                        break;
-                }
-                
-                filterForm.querySelector('[name="page"]').value = 1;
-                filterForm.submit();
-            });
-        });
-        
         // Keyboard shortcuts
         document.addEventListener('keydown', function(e) {
             // Ctrl+F to focus search
@@ -1648,6 +1973,24 @@ CREATE INDEX idx_products_category ON products(category_id);
                     filterForm.submit();
                 }
             }
+            
+            // Ctrl+R to sort by revenue descending
+            if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
+                e.preventDefault();
+                setSort('revenue_desc');
+            }
+            
+            // Ctrl+S to sort by sold descending
+            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+                e.preventDefault();
+                setSort('sold_desc');
+            }
+            
+            // Ctrl+N to sort by name ascending
+            if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
+                e.preventDefault();
+                setSort('name_asc');
+            }
         });
         
         // Performance monitoring
@@ -1660,6 +2003,21 @@ CREATE INDEX idx_products_category ON products(category_id);
                 console.log(`Page loaded in ${measures[0].duration.toFixed(2)}ms`);
             }
         }
+        
+        // Add tooltips to revenue cells
+        const revenueCells = document.querySelectorAll('td[class*="text-"]');
+        revenueCells.forEach(cell => {
+            if (cell.textContent.includes('KSH')) {
+                cell.title = 'Click revenue header to change sort order';
+                cell.style.cursor = 'help';
+            }
+        });
+        
+        // Highlight top 3 performers
+        const topPerformers = document.querySelectorAll('.rank-1, .rank-2, .rank-3');
+        topPerformers.forEach(row => {
+            row.parentElement.style.boxShadow = 'inset 4px 0 0 0 #ffd700';
+        });
     });
     </script>
 </body>

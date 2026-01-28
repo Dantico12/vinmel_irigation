@@ -18,6 +18,7 @@ function initSecureSession() {
         
         ini_set('session.cookie_samesite', 'Strict');
         
+        session_start();
         
         // Initialize CSRF token if not exists
         if (!isset($_SESSION['csrf_token'])) {
@@ -233,20 +234,17 @@ function validateFileUpload($file, $allowedTypes = ['image/jpeg', 'image/png', '
     return $errors;
 }
 
-// Logging Function with improved error handling
+// Logging Function with improved error handling - FIXED VERSION
 function securityLog($message, $level = 'INFO', $user_id = null) {
     $logDir = __DIR__;
-    $logFile = $logDir . '/security.log';
     
-    // Ensure log directory is writable
-    if (!is_writable($logDir)) {
-        // Try to fix permissions
-        if (!file_exists($logDir)) {
-            mkdir($logDir, 0755, true);
-        } else {
-            chmod($logDir, 0755);
-        }
-    }
+    // Try different log locations in order of preference
+    $logLocations = [
+        $logDir . '/security.log',                    // Primary location
+        $logDir . '/../logs/security.log',            // Parent logs directory
+        sys_get_temp_dir() . '/vinmel_security.log',  // System temp directory
+        '/tmp/vinmel_security.log'                    // /tmp directory
+    ];
     
     $timestamp = date('Y-m-d H:i:s');
     $ip = $_SERVER['REMOTE_ADDR'] ?? 'UNKNOWN';
@@ -255,23 +253,51 @@ function securityLog($message, $level = 'INFO', $user_id = null) {
     
     $logMessage = "[$timestamp] [$level] [IP:$ip] [User:$user_id] [URI:$requestUri] $message\n";
     
-    // Try multiple methods to write log
-    try {
-        // Method 1: Direct file write
-        $result = @file_put_contents($logFile, $logMessage, FILE_APPEND | LOCK_EX);
-        
-        if ($result === false) {
-            // Method 2: Try alternative location
-            $altLog = '/tmp/vinmel_security_' . date('Y-m-d') . '.log';
-            @file_put_contents($altLog, $logMessage, FILE_APPEND | LOCK_EX);
+    $logWritten = false;
+    
+    // Try each log location until one works
+    foreach ($logLocations as $logFile) {
+        try {
+            // Check if we can write to this location
+            $logDir = dirname($logFile);
             
-            // Method 3: Use error_log
-            error_log("SECURITY_LOG: " . trim($logMessage));
+            // Create directory if it doesn't exist (skip for system directories)
+            if (!is_dir($logDir) && strpos($logDir, '/tmp') === false) {
+                @mkdir($logDir, 0755, true);
+            }
+            
+            // Try to write to the log file
+            $result = @file_put_contents($logFile, $logMessage, FILE_APPEND | LOCK_EX);
+            
+            if ($result !== false) {
+                $logWritten = true;
+                
+                // Try to set permissions (but don't fail if we can't)
+                try {
+                    if (file_exists($logFile)) {
+                        $currentPerms = fileperms($logFile);
+                        if ($currentPerms !== false && ($currentPerms & 0777) != 0644) {
+                            @chmod($logFile, 0644);
+                        }
+                    }
+                } catch (Exception $permError) {
+                    // Silently ignore permission errors
+                }
+                
+                break; // Success, stop trying other locations
+            }
+        } catch (Exception $e) {
+            // Continue to next location
+            continue;
         }
-    } catch (Exception $e) {
-        // Final fallback
-        error_log("Security log failed: " . $e->getMessage() . " | Original: " . $message);
     }
+    
+    // If all file logging fails, use error_log
+    if (!$logWritten) {
+        error_log("SECURITY_LOG: " . trim($logMessage));
+    }
+    
+    return $logWritten;
 }
 
 // Simplified sanitization for quick use
@@ -393,34 +419,49 @@ function destroySession() {
     session_destroy();
 }
 
-// Function to check and create necessary files
+// Function to check and create necessary files - FIXED VERSION
 function checkSecurityFiles() {
-    $logFile = __DIR__ . '/security.log';
-    $errorLog = __DIR__ . '/php_errors.log';
+    $success = true;
     
-    // Create security.log if it doesn't exist
-    if (!file_exists($logFile)) {
-        $handle = fopen($logFile, 'w');
-        if ($handle) {
-            fwrite($handle, "[" . date('Y-m-d H:i:s') . "] [INFO] Security log initialized\n");
-            fclose($handle);
-            chmod($logFile, 0644);
+    // Try multiple locations for security.log
+    $logLocations = [
+        __DIR__ . '/security.log',
+        __DIR__ . '/../logs/security.log',
+        sys_get_temp_dir() . '/vinmel_security.log'
+    ];
+    
+    foreach ($logLocations as $logFile) {
+        try {
+            if (!file_exists($logFile)) {
+                $logDir = dirname($logFile);
+                
+                // Create directory if it doesn't exist
+                if (!is_dir($logDir)) {
+                    @mkdir($logDir, 0755, true);
+                }
+                
+                $handle = @fopen($logFile, 'w');
+                if ($handle) {
+                    fwrite($handle, "[" . date('Y-m-d H:i:s') . "] [INFO] Security log initialized at $logFile\n");
+                    fclose($handle);
+                    
+                    // Try to set permissions but don't fail if we can't
+                    try {
+                        @chmod($logFile, 0644);
+                    } catch (Exception $e) {
+                        // Silently continue
+                    }
+                }
+            }
+        } catch (Exception $e) {
+            $success = false;
+            // Don't throw error, just continue
         }
     }
     
-    // Create php_errors.log if it doesn't exist
-    if (!file_exists($errorLog)) {
-        $handle = fopen($errorLog, 'w');
-        if ($handle) {
-            fwrite($handle, "[" . date('Y-m-d H:i:s') . "] PHP Error Log initialized\n");
-            fclose($handle);
-            chmod($errorLog, 0644);
-        }
-    }
-    
-    return [file_exists($logFile), file_exists($errorLog)];
+    return $success;
 }
 
 // Initialize security check on include
-checkSecurityFiles();
+@checkSecurityFiles();
 ?>

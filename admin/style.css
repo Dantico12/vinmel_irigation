@@ -6599,3 +6599,250 @@ body.modal-open {
         font-size: 0.75rem;
     }
 }
+
+        .revenue-highlight {
+            background: linear-gradient(45deg, #e8f5e9, #c8e6c9);
+            border-left: 4px solid #4caf50;
+        }
+        .revenue-value {
+            font-weight: bold;
+            font-size: 1.1em;
+            color: #2e7d32;
+        }
+        .revenue-badge {
+            background-color: #4caf50;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .product-icon {
+            width: 40px;
+            height: 40px;
+        }
+        .product-icon-sm {
+            width: 32px;
+            height: 32px;
+            font-size: 14px;
+        }
+        .stock-progress-bar {
+            height: 6px;
+        }
+        .status-in-stock {
+            color: #28a745;
+            background-color: rgba(40, 167, 69, 0.1);
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.85em;
+        }
+        .status-low-stock {
+            color: #ffc107;
+            background-color: rgba(255, 193, 7, 0.1);
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.85em;
+        }
+        .status-out-of-stock {
+            color: #dc3545;
+            background-color: rgba(220, 53, 69, 0.1);
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.85em;
+        }
+        .summary-card {
+            transition: transform 0.2s;
+            height: 100%;
+        }
+        .summary-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        .summary-icon {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 15px;
+            font-size: 24px;
+        }
+        .summary-value {
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .summary-label {
+            font-size: 0.9rem;
+            color: #6c757d;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .period-info-banner {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+        .stat-detail-card {
+            padding: 10px 15px;
+            margin-bottom: 10px;
+            border-radius: 6px;
+            border-left: 4px solid #007bff;
+            background-color: #f8f9fa;
+        }
+        .stat-detail-label {
+            font-size: 0.85rem;
+            color: #6c757d;
+            margin-bottom: 3px;
+        }
+        .stat-detail-value {
+            font-size: 1.2rem;
+            font-weight: bold;
+        }
+        .border-left-success { border-left-color: #28a745 !important; }
+        .border-left-danger { border-left-color: #dc3545 !important; }
+        .border-left-warning { border-left-color: #ffc107 !important; }
+        .border-left-primary { border-left-color: #007bff !important; }
+        .border-left-info { border-left-color: #17a2b8 !important; }
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.9);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s;
+        }
+        .loading-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+        .table-fixed-layout {
+            table-layout: fixed;
+        }
+        .nowrap {
+            white-space: nowrap;
+        }
+        .text-truncate {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .product-name-truncate {
+            max-width: 200px;
+        }
+        .sku-truncate {
+            max-width: 100px;
+            display: inline-block;
+        }
+        .category-truncate {
+            max-width: 120px;
+            display: inline-block;
+        }
+        .total-revenue-banner {
+            background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .revenue-breakdown {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .revenue-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #dee2e6;
+        }
+        .revenue-item:last-child {
+            border-bottom: none;
+        }
+        .revenue-item-label {
+            font-weight: 500;
+            color: #495057;
+        }
+        .revenue-item-value {
+            font-weight: bold;
+            color: #28a745;
+        }
+        .avg-revenue {
+            color: #17a2b8;
+        }
+        .top-revenue {
+            color: #ff6b00;
+        }
+        .sort-controls {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+        }
+        .sort-btn {
+            transition: all 0.3s;
+        }
+        .sort-btn.active {
+            background-color: #007bff;
+            color: white;
+            border-color: #007bff;
+        }
+        .revenue-rank {
+            width: 40px;
+            text-align: center;
+            font-weight: bold;
+        }
+        .rank-1 {
+            background-color: #ffd700 !important;
+            color: #000;
+        }
+        .rank-2 {
+            background-color: #c0c0c0 !important;
+            color: #000;
+        }
+        .rank-3 {
+            background-color: #cd7f32 !important;
+            color: #fff;
+        }
+        .rank-other {
+            background-color: #f8f9fa;
+            color: #495057;
+        }
+        .performance-badge {
+            font-size: 0.75rem;
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-weight: bold;
+        }
+        .performance-excellent {
+            background-color: #4CAF50;
+            color: white;
+        }
+        .performance-good {
+            background-color: #2196F3;
+            color: white;
+        }
+        .performance-average {
+            background-color: #FF9800;
+            color: white;
+        }
+        .performance-poor {
+            background-color: #f44336;
+            color: white;
+        }
+        .performance-none {
+            background-color: #9e9e9e;
+            color: white;
+        }

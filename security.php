@@ -122,22 +122,92 @@ function checkRateLimit($key, $limit = 10, $timeframe = 60) {
     return true;
 }
 
-// XSS Protection Headers
+// XSS Protection Headers - FIXED CSP VERSION
 function setSecurityHeaders() {
     header("X-Frame-Options: DENY");
     header("X-XSS-Protection: 1; mode=block");
     header("X-Content-Type-Options: nosniff");
     header("Referrer-Policy: strict-origin-when-cross-origin");
     
-    // Content Security Policy - adjust based on your needs
+    // Content Security Policy - FIXED TO ALLOW EXTERNAL RESOURCES
     $csp = [
         "default-src 'self'",
-        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com",
-        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com",
-        "img-src 'self' data: https:",
-        "font-src 'self' https://cdnjs.cloudflare.com"
+        // Script sources: allow self, CDNs, inline scripts (for now), eval (for jQuery), and blob URLs
+        "script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com 'unsafe-inline' 'unsafe-eval' blob:",
+        // Style sources: allow self, CDNs, and inline styles
+        "style-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com 'unsafe-inline'",
+        // Image sources: allow self, data URLs, https, and blob URLs
+        "img-src 'self' data: https: blob:",
+        // Font sources: allow self and CDN
+        "font-src 'self' https://cdnjs.cloudflare.com",
+        // Connect sources: allow self, CDNs (for map files), and WebSocket
+        "connect-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com wss:",
+        // Frame sources: allow self
+        "frame-src 'self'",
+        // Object sources: none (no Flash, Java, etc.)
+        "object-src 'none'",
+        // Base URI: self only
+        "base-uri 'self'",
+        // Form actions: self only
+        "form-action 'self'",
+        // Frame ancestors: none (prevent clickjacking)
+        "frame-ancestors 'none'",
+        // Upgrade insecure requests
+        "upgrade-insecure-requests"
     ];
+    
     header("Content-Security-Policy: " . implode("; ", $csp));
+}
+
+// Alternative CSP function for development/testing
+function setDevelopmentCSP() {
+    // Development CSP - More permissive for testing
+    $csp = [
+        "default-src *",
+        "script-src * 'unsafe-inline' 'unsafe-eval' blob:",
+        "style-src * 'unsafe-inline'",
+        "img-src * data: blob:",
+        "font-src * data:",
+        "connect-src *",
+        "frame-src *",
+        "object-src *",
+        "base-uri *",
+        "form-action *"
+    ];
+    
+    header("Content-Security-Policy: " . implode("; ", $csp));
+}
+
+// Generate nonce for inline scripts (more secure alternative to 'unsafe-inline')
+function generateCSPNonce() {
+    if (!isset($_SESSION['csp_nonce'])) {
+        $_SESSION['csp_nonce'] = base64_encode(random_bytes(16));
+    }
+    return $_SESSION['csp_nonce'];
+}
+
+// Set CSP headers with nonce support
+function setSecureCSPWithNonce() {
+    $nonce = generateCSPNonce();
+    
+    $csp = [
+        "default-src 'self'",
+        "script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com 'unsafe-eval' blob: 'nonce-$nonce'",
+        "style-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com 'unsafe-inline'",
+        "img-src 'self' data: https: blob:",
+        "font-src 'self' https://cdnjs.cloudflare.com",
+        "connect-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com wss:",
+        "frame-src 'self'",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+        "upgrade-insecure-requests"
+    ];
+    
+    header("Content-Security-Policy: " . implode("; ", $csp));
+    
+    return $nonce;
 }
 
 // SQL Injection Protection
@@ -189,7 +259,7 @@ function validateFileUpload($file, $allowedTypes = ['image/jpeg', 'image/png', '
 // Session Security
 function secureSession() {
     ini_set('session.cookie_httponly', 1);
-    ini_set('session.cookie_secure', 1); // Enable if using HTTPS
+    ini_set('session.cookie_secure', isset($_SERVER['HTTPS']) ? 1 : 0); // Enable only if using HTTPS
     ini_set('session.cookie_samesite', 'Strict');
     
     session_regenerate_id(true);
@@ -258,4 +328,33 @@ function validateFloat($value, $min = null, $max = null) {
     
     return true;
 }
+
+// Helper function to get CSP nonce for inline scripts
+function getCSPNonce() {
+    return generateCSPNonce();
+}
+
+// Function to validate and set appropriate CSP based on environment
+function setAppropriateCSP($environment = 'production') {
+    switch ($environment) {
+        case 'development':
+            setDevelopmentCSP();
+            break;
+        case 'staging':
+            // Slightly more restrictive than development
+            setSecurityHeaders(); // Use the fixed version
+            break;
+        case 'production':
+        default:
+            // Most secure - use nonce-based CSP
+            return setSecureCSPWithNonce();
+    }
+    return null;
+}
+
+// Function to echo CSP nonce in HTML script tags
+function echoCSPNonce() {
+    echo 'nonce="' . getCSPNonce() . '"';
+}
+
 ?>

@@ -1,367 +1,395 @@
 <?php
-// test_templates_flow.php
+// test_template_debug.php
+session_start([
+    'cookie_httponly' => true,
+    'cookie_secure' => isset($_SERVER['HTTPS']),
+    'cookie_samesite' => 'Strict'
+]);
+
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
-session_start();
+
 require_once 'config.php';
 
-// Simulate your actual user session
-$_SESSION['user_id'] = 4;
-
-$database = new Database();
-$conn = $database->getConnection();
-
-echo "<!DOCTYPE html><html><head><title>Template Flow Test</title><style>
-    body { font-family: Arial; margin: 20px; }
-    .section { background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px; }
+echo "<!DOCTYPE html>";
+echo "<html lang='en'>";
+echo "<head>";
+echo "<title>Template Debug Test</title>";
+echo "<link href='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css' rel='stylesheet'>";
+echo "<style>
+    body { padding: 20px; }
+    .debug-section { margin-bottom: 30px; padding: 20px; border: 1px solid #ddd; border-radius: 5px; }
     .success { color: green; font-weight: bold; }
     .error { color: red; font-weight: bold; }
-    .info { color: blue; }
-    pre { background: #eee; padding: 10px; border-radius: 3px; overflow: auto; }
-</style></head><body>";
+    .warning { color: orange; font-weight: bold; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+    th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+    th { background-color: #f2f2f2; }
+</style>";
+echo "</head>";
+echo "<body>";
+echo "<div class='container'>";
+echo "<h1>Template Debug Test</h1>";
+echo "<p class='text-muted'>This script will help diagnose the 'Template not found' issue</p>";
 
-echo "<h1>Testing templates.php Form Submission Flow</h1>";
-
-// Simulate the exact POST data your form sends
-echo "<div class='section'>";
-echo "<h2>1. Simulating Form POST Data</h2>";
-
-$post_data = [
-    'generate_from_template' => '1',
-    'template_id' => '2',
-    'quotation_number' => 'QTN-' . date('Ymd-His'),
-    'project_name' => 'Test Project From Debug',
-    'customer_name' => 'Test Customer',
-    'location' => 'Test Location',
-    'land_size' => '2.5',
-    'save_quotation' => '1'
-];
-
-echo "<pre>POST data that would be sent:\n" . print_r($post_data, true) . "</pre>";
-
-// Get active period
-$stmt = $conn->prepare("SELECT * FROM time_periods WHERE is_active = 1 LIMIT 1");
-$stmt->execute();
-$result = $stmt->get_result();
-$active_period = $result->fetch_assoc();
-$stmt->close();
-
-echo "<div class='info'>Active Period ID: " . ($active_period['id'] ?? 'N/A') . "</div>";
-echo "<div class='info'>User ID: " . $_SESSION['user_id'] . "</div>";
-echo "</div>";
-
-// Test the generateQuotationFromTemplate function
-echo "<div class='section'>";
-echo "<h2>2. Testing generateQuotationFromTemplate</h2>";
-
-// Copy the exact function from your templates.php
-function generateQuotationFromTemplate($template_id, $data, $conn) {
-    $template_stmt = $conn->prepare("SELECT * FROM irrigation_templates WHERE id = ?");
-    $template_stmt->bind_param("i", $template_id);
-    $template_stmt->execute();
-    $result = $template_stmt->get_result();
-    $template = $result->fetch_assoc();
-    $template_stmt->close();
-    
-    if (!$template) {
-        return null;
-    }
-    
-    // Decode JSON fields
-    $template['items'] = json_decode($template['items_json'] ?? '[]', true) ?? [];
-    
-    $quotation = [
-        'quotation_number' => $data['quotation_number'] ?? 'QTN-' . date('Ymd-His'),
-        'project_name' => $data['project_name'] ?? $template['project_name'],
-        'customer_name' => $data['customer_name'] ?? $template['customer_name'],
-        'location' => $data['location'] ?? $template['location'],
-        'land_size' => floatval($data['land_size'] ?? $template['land_size']),
-        'land_unit' => $data['land_unit'] ?? $template['land_unit'],
-        'crop_type' => $data['crop_type'] ?? $template['crop_type'],
-        'crop_variety' => $data['crop_variety'] ?? $template['crop_variety'],
-        'irrigation_type' => $data['irrigation_type'] ?? $template['irrigation_type'],
-        'row_spacing' => floatval($data['row_spacing'] ?? $template['row_spacing']),
-        'plant_spacing' => floatval($data['plant_spacing'] ?? $template['plant_spacing']),
-        'water_pressure' => floatval($data['water_pressure'] ?? $template['water_pressure']),
-        'system_efficiency' => floatval($data['system_efficiency'] ?? $template['system_efficiency']),
-        'labor_percentage' => floatval($data['labor_percentage'] ?? $template['labor_percentage']),
-        'discount_percentage' => floatval($data['discount_percentage'] ?? $template['discount_percentage']),
-        'tax_rate' => floatval($data['tax_rate'] ?? $template['tax_rate']),
-        'items' => [],
-        'template_name' => $template['template_name']
-    ];
-    
-    // Scale items based on land size if needed
-    $scale_factor = 1;
-    if (isset($data['land_size']) && $template['land_size'] > 0) {
-        $scale_factor = floatval($data['land_size']) / $template['land_size'];
-    }
-    
-    // Process template items
-    foreach ($template['items'] as $item) {
-        $scaled_item = $item;
-        if ($scale_factor != 1) {
-            $scaled_item['quantity'] = ceil($item['quantity'] * $scale_factor);
-            $scaled_item['amount'] = $scaled_item['quantity'] * $item['rate'];
-        }
-        $quotation['items'][] = $scaled_item;
-    }
-    
-    // Calculate totals
-    $total_material = array_sum(array_column($quotation['items'], 'amount'));
-    $labor_cost = $total_material * ($quotation['labor_percentage'] / 100);
-    $subtotal = $total_material + $labor_cost;
-    $discount_amount = $subtotal * ($quotation['discount_percentage'] / 100);
-    $taxable_amount = $subtotal - $discount_amount;
-    $tax_amount = $taxable_amount * ($quotation['tax_rate'] / 100);
-    $grand_total = $taxable_amount + $tax_amount;
-    
-    // Add calculated costs
-    $quotation['total_material'] = $total_material;
-    $quotation['labor_cost'] = $labor_cost;
-    $quotation['discount_amount'] = $discount_amount;
-    $quotation['tax_amount'] = $tax_amount;
-    $quotation['grand_total'] = $grand_total;
-    
-    return $quotation;
-}
-
-// Call the function with our test data
-$generated_quotation = generateQuotationFromTemplate(2, $post_data, $conn);
-
-if ($generated_quotation) {
-    echo "<div class='success'>✓ Quotation generated successfully!</div>";
-    echo "<h3>Generated Quotation Data:</h3>";
-    echo "<pre>" . print_r($generated_quotation, true) . "</pre>";
+// Check session
+echo "<div class='debug-section'>";
+echo "<h3>1. Session Check</h3>";
+if (isset($_SESSION['user_id'])) {
+    $user_id = $_SESSION['user_id'];
+    echo "<p class='success'>✓ User ID in session: $user_id</p>";
 } else {
-    echo "<div class='error'>✗ Failed to generate quotation</div>";
-}
-echo "</div>";
-
-// Test saveQuotationToDatabase with the generated data
-echo "<div class='section'>";
-echo "<h2>3. Testing saveQuotationToDatabase with Generated Data</h2>";
-
-if ($generated_quotation) {
-    // Add template_id to the quotation
-    $generated_quotation['template_id'] = 2;
-    
-    // Test the save function
-    function testSaveQuotation($quotation, $user_id, $period_id, $conn) {
-        try {
-            // Insert quotation
-            $stmt = $conn->prepare("
-                INSERT INTO irrigation_quotations 
-                (quotation_number, project_name, customer_name, location, land_size, land_unit, 
-                 crop_type, irrigation_type, total_material, labor_cost, discount_amount, 
-                 tax_amount, grand_total, items_json, template_id, user_id, period_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ");
-            
-            if (!$stmt) {
-                throw new Exception("Prepare failed: " . $conn->error);
-            }
-            
-            $items_json = json_encode($quotation['items'] ?? []);
-            $template_id = isset($quotation['template_id']) ? intval($quotation['template_id']) : null;
-            
-            // Extract values
-            $quotation_number = $quotation['quotation_number'] ?? '';
-            $project_name = $quotation['project_name'] ?? '';
-            $customer_name = $quotation['customer_name'] ?? '';
-            $location = $quotation['location'] ?? '';
-            $land_size = floatval($quotation['land_size'] ?? 0);
-            $land_unit = $quotation['land_unit'] ?? 'acres';
-            $crop_type = $quotation['crop_type'] ?? '';
-            $irrigation_type = $quotation['irrigation_type'] ?? 'drip';
-            $total_material = floatval($quotation['total_material'] ?? 0);
-            $labor_cost = floatval($quotation['labor_cost'] ?? 0);
-            $discount_amount = floatval($quotation['discount_amount'] ?? 0);
-            $tax_amount = floatval($quotation['tax_amount'] ?? 0);
-            $grand_total = floatval($quotation['grand_total'] ?? 0);
-            
-            // Bind parameters
-            $stmt->bind_param(
-                "ssssdssddddddssii",
-                $quotation_number,
-                $project_name,
-                $customer_name,
-                $location,
-                $land_size,
-                $land_unit,
-                $crop_type,
-                $irrigation_type,
-                $total_material,
-                $labor_cost,
-                $discount_amount,
-                $tax_amount,
-                $grand_total,
-                $items_json,
-                $template_id,
-                $user_id,
-                $period_id
-            );
-            
-            if (!$stmt->execute()) {
-                throw new Exception("Execute failed: " . $stmt->error);
-            }
-            
-            $quotation_id = $conn->insert_id;
-            $stmt->close();
-            
-            return $quotation_id;
-        } catch (Exception $e) {
-            error_log("Error saving quotation: " . $e->getMessage());
-            return false;
-        }
-    }
-    
-    $saved_id = testSaveQuotation($generated_quotation, $_SESSION['user_id'], $active_period['id'], $conn);
-    
-    if ($saved_id) {
-        echo "<div class='success'>✓ Quotation saved successfully! ID: $saved_id</div>";
-        
-        // Verify it was saved to the CORRECT table
-        $verify_stmt = $conn->prepare("SELECT * FROM irrigation_quotations WHERE id = ?");
-        $verify_stmt->bind_param("i", $saved_id);
-        $verify_stmt->execute();
-        $verify_result = $verify_stmt->get_result();
-        $saved_quotation = $verify_result->fetch_assoc();
-        $verify_stmt->close();
-        
-        echo "<h3>Saved to irrigation_quotations table:</h3>";
-        echo "<table border='1' cellpadding='5'>";
-        foreach ($saved_quotation as $key => $value) {
-            echo "<tr><td><strong>$key</strong></td><td>";
-            if ($key === 'items_json') {
-                echo "<pre>" . print_r(json_decode($value, true), true) . "</pre>";
-            } else {
-                echo htmlspecialchars($value ?? '');
-            }
-            echo "</td></tr>";
-        }
-        echo "</table>";
-    } else {
-        echo "<div class='error'>✗ Failed to save quotation</div>";
-    }
-}
-echo "</div>";
-
-// Check what happens in your actual templates.php
-echo "<div class='section'>";
-echo "<h2>4. The ACTUAL Issue in Your templates.php</h2>";
-
-echo "<h3>Look at this code in your templates.php (around line 430-450):</h3>";
-echo "<pre style='background:#ffcccc;'>";
-echo htmlspecialchars('
-// Handle quotation generation from template
-if ($_SERVER[\'REQUEST_METHOD\'] === \'POST\' && isset($_POST[\'generate_from_template\'])) {
-    $template_id = $_POST[\'template_id\'] ?? null;
-    $quotation_data = $_POST;
-    
-    // Generate quotation from template
-    $quotation = generateQuotationFromTemplate($template_id, $quotation_data, $conn);
-    
-    if ($quotation && isset($_POST[\'save_quotation\'])) {
-        $quotation[\'template_id\'] = $template_id;
-        $saved = saveQuotationToDatabase($quotation, $user_id, $active_period[\'id\'] ?? 1, $conn);
-        if ($saved) {
-            $_SESSION[\'success_message\'] = "Quotation generated and saved!";
-        } else {
-            $_SESSION[\'error_message\'] = "Failed to save quotation.";
-        }
-        header("Location: " . $_SERVER[\'PHP_SELF\']);
-        exit();
-    }
-}
-');
-echo "</pre>";
-
-echo "<h3>Potential Issues:</h3>";
-echo "<ol>";
-echo "<li><strong>Missing Period:</strong> If \$active_period is not set, it uses 1 as default</li>";
-echo "<li><strong>Wrong User ID:</strong> Make sure \$user_id is set from session</li>";
-echo "<li><strong>Missing Redirect:</strong> What happens if save fails? No error is shown</li>";
-echo "<li><strong>Session Messages:</strong> Might not be displayed properly</li>";
-echo "</ol>";
-
-echo "<h3>Suggested Fix:</h3>";
-echo "<pre style='background:#ccffcc;'>";
-echo htmlspecialchars('
-// FIXED VERSION:
-if ($_SERVER[\'REQUEST_METHOD\'] === \'POST\' && isset($_POST[\'generate_from_template\'])) {
-    $template_id = $_POST[\'template_id\'] ?? null;
-    $quotation_data = $_POST;
-    
-    // Generate quotation from template
-    $quotation = generateQuotationFromTemplate($template_id, $quotation_data, $conn);
-    
-    if ($quotation) {
-        if (isset($_POST[\'save_quotation\'])) {
-            // Make sure we have all required data
-            if (!isset($active_period[\'id\'])) {
-                // Try to get any period
-                $stmt = $conn->prepare("SELECT id FROM time_periods LIMIT 1");
-                $stmt->execute();
-                $result = $stmt->get_result();
-                $period = $result->fetch_assoc();
-                $stmt->close();
-                $period_id = $period[\'id\'] ?? 1;
-            } else {
-                $period_id = $active_period[\'id\'];
-            }
-            
-            $quotation[\'template_id\'] = $template_id;
-            $saved = saveQuotationToDatabase($quotation, $user_id, $period_id, $conn);
-            
-            if ($saved) {
-                $_SESSION[\'success_message\'] = "Quotation generated and saved successfully!";
-            } else {
-                $_SESSION[\'error_message\'] = "Failed to save quotation. Please try again.";
-            }
-        } else {
-            // Just generate without saving
-            $_SESSION[\'quotation_data\'] = $quotation;
-            $_SESSION[\'success_message\'] = "Quotation generated successfully!";
-        }
-    } else {
-        $_SESSION[\'error_message\'] = "Failed to generate quotation. Template not found.";
-    }
-    
-    header("Location: " . $_SERVER[\'PHP_SELF\']);
+    echo "<p class='error'>✗ No user ID in session. You might need to login first.</p>";
+    echo "<p><a href='login.php' class='btn btn-primary'>Go to Login</a></p>";
     exit();
 }
-');
-echo "</pre>";
 echo "</div>";
 
-// Final test - simulate the exact flow
-echo "<div class='section'>";
-echo "<h2>5. Final Test - Simulate Entire Flow</h2>";
-
-echo "<form method='POST' action='templates.php' style='border:2px solid green;padding:20px;'>";
-echo "<h3>This is EXACTLY what your form sends:</h3>";
-echo "<input type='hidden' name='generate_from_template' value='1'>";
-echo "<input type='hidden' name='template_id' value='2'>";
-echo "<input type='hidden' name='save_quotation' value='1'>";
-echo "<div style='margin:10px 0;'>";
-echo "<label><strong>quotation_number:</strong></label><br>";
-echo "<input type='text' name='quotation_number' value='QTN-" . date('Ymd-His') . "' readonly style='width:300px;padding:5px;background:#f0f0f0;'>";
-echo "</div>";
-echo "<div style='margin:10px 0;'>";
-echo "<label><strong>project_name:</strong> *</label><br>";
-echo "<input type='text' name='project_name' value='Live Test Project' required style='width:300px;padding:5px;'>";
-echo "</div>";
-echo "<div style='margin:10px 0;'>";
-echo "<label><strong>land_size:</strong></label><br>";
-echo "<input type='number' name='land_size' value='3.0' step='0.01' style='width:150px;padding:5px;'>";
-echo "</div>";
-echo "<button type='submit' style='background:green;color:white;border:none;padding:10px 20px;border-radius:5px;cursor:pointer;font-weight:bold;'>
-    <i class='fas fa-paper-plane'></i> SUBMIT TO templates.php
-</button>";
-echo "<p><small>This will trigger the exact same code path as clicking 'Use' on a template</small></p>";
-echo "</form>";
+// Database connection test
+echo "<div class='debug-section'>";
+echo "<h3>2. Database Connection Test</h3>";
+try {
+    $database = new Database();
+    $conn = $database->getConnection();
+    
+    if ($conn->connect_error) {
+        echo "<p class='error'>✗ Database connection failed: " . $conn->connect_error . "</p>";
+    } else {
+        echo "<p class='success'>✓ Database connection successful</p>";
+        echo "<p>Database Host: " . (defined('DB_HOST') ? DB_HOST : 'Not defined') . "</p>";
+        echo "<p>Database Name: " . (defined('DB_NAME') ? DB_NAME : 'Not defined') . "</p>";
+    }
+} catch (Exception $e) {
+    echo "<p class='error'>✗ Database connection exception: " . $e->getMessage() . "</p>";
+}
 echo "</div>";
 
-$conn->close();
-echo "</body></html>";
+// Check if we have a template ID
+echo "<div class='debug-section'>";
+echo "<h3>3. Template ID from URL</h3>";
+if (isset($_GET['id'])) {
+    $template_id = intval($_GET['id']);
+    echo "<p class='success'>✓ Template ID from URL: $template_id</p>";
+} else {
+    echo "<p class='warning'>⚠ No template ID in URL. Testing with sample data...</p>";
+    $template_id = 0;
+}
+echo "</div>";
+
+// Check user existence
+echo "<div class='debug-section'>";
+echo "<h3>4. User Existence Check</h3>";
+$user_check_sql = "SELECT id, name, email FROM users WHERE id = ?";
+$stmt = $conn->prepare($user_check_sql);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$result = $stmt->get_result();
+$user = $result->fetch_assoc();
+$stmt->close();
+
+if ($user) {
+    echo "<p class='success'>✓ User found in database</p>";
+    echo "<table>";
+    echo "<tr><th>ID</th><th>Username</th><th>Email</th></tr>";
+    echo "<tr><td>{$user['id']}</td><td>{$user['username']}</td><td>{$user['email']}</td></tr>";
+    echo "</table>";
+} else {
+    echo "<p class='error'>✗ User NOT found in database with ID: $user_id</p>";
+    echo "<p>This could be a session issue. Try logging out and back in.</p>";
+}
+echo "</div>";
+
+// Check if template exists at all
+echo "<div class='debug-section'>";
+echo "<h3>5. Template Existence (Any Template)</h3>";
+$sql = "SELECT COUNT(*) as total_templates FROM irrigation_templates";
+$result = $conn->query($sql);
+$row = $result->fetch_assoc();
+$total_templates = $row['total_templates'];
+
+if ($total_templates > 0) {
+    echo "<p class='success'>✓ Templates exist in database: $total_templates total templates</p>";
+    
+    // Show first 5 templates
+    $sql = "SELECT id, template_name, user_id, is_active FROM irrigation_templates LIMIT 5";
+    $result = $conn->query($sql);
+    
+    echo "<h5>Sample Templates (first 5):</h5>";
+    echo "<table>";
+    echo "<tr><th>ID</th><th>Name</th><th>User ID</th><th>Active</th><th>Your Template?</th></tr>";
+    while ($row = $result->fetch_assoc()) {
+        $is_yours = ($row['user_id'] == $user_id) ? 'Yes' : 'No';
+        $active_status = $row['is_active'] ? 'Active' : 'Inactive';
+        $row_class = ($row['user_id'] == $user_id) ? 'class="table-success"' : '';
+        echo "<tr $row_class>";
+        echo "<td>{$row['id']}</td>";
+        echo "<td>{$row['template_name']}</td>";
+        echo "<td>{$row['user_id']}</td>";
+        echo "<td>$active_status</td>";
+        echo "<td>$is_yours</td>";
+        echo "</tr>";
+    }
+    echo "</table>";
+} else {
+    echo "<p class='error'>✗ NO templates found in database at all!</p>";
+    echo "<p>This means the 'irrigation_templates' table is empty.</p>";
+}
+echo "</div>";
+
+// Check user's templates
+echo "<div class='debug-section'>";
+echo "<h3>6. Your Templates</h3>";
+$sql = "SELECT id, template_name, is_active, created_at FROM irrigation_templates WHERE user_id = ?";
+$stmt = $conn->prepare($sql);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$result = $stmt->get_result();
+$user_templates = $result->fetch_all(MYSQLI_ASSOC);
+$stmt->close();
+
+if (count($user_templates) > 0) {
+    echo "<p class='success'>✓ You have " . count($user_templates) . " template(s)</p>";
+    echo "<table>";
+    echo "<tr><th>ID</th><th>Name</th><th>Active</th><th>Created</th><th>Test Link</th></tr>";
+    foreach ($user_templates as $template) {
+        $active_status = $template['is_active'] ? 'Active ✓' : 'Inactive ✗';
+        $test_link = $template['is_active'] ? 
+            "<a href='view_template.php?id={$template['id']}' class='btn btn-sm btn-primary'>Test View</a>" :
+            "<span class='text-muted'>Inactive</span>";
+        echo "<tr>";
+        echo "<td>{$template['id']}</td>";
+        echo "<td>{$template['template_name']}</td>";
+        echo "<td>$active_status</td>";
+        echo "<td>{$template['created_at']}</td>";
+        echo "<td>$test_link</td>";
+        echo "</tr>";
+    }
+    echo "</table>";
+} else {
+    echo "<p class='warning'>⚠ You have NO templates in the database</p>";
+    echo "<p>You need to create templates first from the main page.</p>";
+    echo "<p><a href='quotation.php' class='btn btn-primary'>Go Create Templates</a></p>";
+}
+echo "</div>";
+
+// Specific template check (if ID provided)
+if ($template_id > 0) {
+    echo "<div class='debug-section'>";
+    echo "<h3>7. Specific Template Check (ID: $template_id)</h3>";
+    
+    // Check without user restriction
+    $sql = "SELECT * FROM irrigation_templates WHERE id = ?";
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("i", $template_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $template_any = $result->fetch_assoc();
+    $stmt->close();
+    
+    if ($template_any) {
+        echo "<p class='success'>✓ Template EXISTS in database</p>";
+        echo "<table>";
+        echo "<tr><th>Field</th><th>Value</th></tr>";
+        echo "<tr><td>ID</td><td>{$template_any['id']}</td></tr>";
+        echo "<tr><td>Name</td><td>{$template_any['template_name']}</td></tr>";
+        echo "<tr><td>User ID</td><td>{$template_any['user_id']}</td></tr>";
+        echo "<tr><td>Active</td><td>" . ($template_any['is_active'] ? 'Yes' : 'No') . "</td></tr>";
+        echo "<tr><td>Your User ID</td><td>$user_id</td></tr>";
+        echo "<tr><td>Match?</td><td>" . ($template_any['user_id'] == $user_id ? 'YES ✓' : 'NO ✗') . "</td></tr>";
+        echo "</table>";
+        
+        // Now check with user restriction (like view_template.php does)
+        $sql = "SELECT * FROM irrigation_templates WHERE id = ? AND user_id = ? AND is_active = 1";
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param("ii", $template_id, $user_id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $template_yours = $result->fetch_assoc();
+        $stmt->close();
+        
+        if ($template_yours) {
+            echo "<p class='success'>✓ Template found with user/permission check!</p>";
+            echo "<p>This means view_template.php SHOULD work for this template.</p>";
+        } else {
+            echo "<p class='error'>✗ Template NOT found with user/permission check</p>";
+            echo "<p>Possible reasons:</p>";
+            echo "<ul>";
+            if ($template_any['user_id'] != $user_id) {
+                echo "<li>Template belongs to different user (User ID: {$template_any['user_id']})</li>";
+            }
+            if (!$template_any['is_active']) {
+                echo "<li>Template is not active (is_active = 0)</li>";
+            }
+            echo "</ul>";
+        }
+    } else {
+        echo "<p class='error'>✗ Template ID $template_id does NOT exist in database at all</p>";
+        echo "<p>The template may have been deleted or the ID is wrong.</p>";
+    }
+    echo "</div>";
+}
+
+// Table structure check
+echo "<div class='debug-section'>";
+echo "<h3>8. Table Structure Check</h3>";
+$tables_to_check = ['irrigation_templates', 'template_crop_varieties', 'users'];
+foreach ($tables_to_check as $table) {
+    $sql = "SHOW TABLES LIKE '$table'";
+    $result = $conn->query($sql);
+    
+    if ($result->num_rows > 0) {
+        echo "<p class='success'>✓ Table '$table' exists</p>";
+        
+        // Show columns
+        $columns_sql = "SHOW COLUMNS FROM $table";
+        $columns_result = $conn->query($columns_sql);
+        
+        echo "<details>";
+        echo "<summary>Show columns for $table</summary>";
+        echo "<table>";
+        echo "<tr><th>Field</th><th>Type</th><th>Null</th><th>Key</th></tr>";
+        while ($col = $columns_result->fetch_assoc()) {
+            echo "<tr>";
+            echo "<td>{$col['Field']}</td>";
+            echo "<td>{$col['Type']}</td>";
+            echo "<td>{$col['Null']}</td>";
+            echo "<td>{$col['Key']}</td>";
+            echo "</tr>";
+        }
+        echo "</table>";
+        echo "</details>";
+    } else {
+        echo "<p class='error'>✗ Table '$table' does NOT exist!</p>";
+    }
+}
+echo "</div>";
+
+// Test the exact query from view_template.php
+echo "<div class='debug-section'>";
+echo "<h3>9. Test Exact Query from view_template.php</h3>";
+if ($template_id > 0) {
+    $test_sql = "SELECT it.* FROM irrigation_templates it WHERE it.id = ? AND it.user_id = ? AND it.is_active = 1";
+    $stmt = $conn->prepare($test_sql);
+    $stmt->bind_param("ii", $template_id, $user_id);
+    
+    echo "<p>Query: <code>$test_sql</code></p>";
+    echo "<p>Parameters: template_id=$template_id, user_id=$user_id</p>";
+    
+    if ($stmt->execute()) {
+        $result = $stmt->get_result();
+        $template = $result->fetch_assoc();
+        $stmt->close();
+        
+        if ($template) {
+            echo "<p class='success'>✓ Query SUCCESS - Template found!</p>";
+            echo "<pre>" . print_r($template, true) . "</pre>";
+        } else {
+            echo "<p class='error'>✗ Query SUCCESS but NO template returned</p>";
+            echo "<p>This means the WHERE conditions failed. Check:</p>";
+            echo "<ul>";
+            echo "<li>Template ID exists</li>";
+            echo "<li>User ID matches</li>";
+            echo "<li>is_active = 1</li>";
+            echo "</ul>";
+            
+            // Check each condition separately
+            echo "<h5>Debug each condition:</h5>";
+            
+            // Check ID only
+            $sql = "SELECT id FROM irrigation_templates WHERE id = ?";
+            $stmt = $conn->prepare($sql);
+            $stmt->bind_param("i", $template_id);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            $id_check = $result->fetch_assoc();
+            $stmt->close();
+            echo "<p>ID exists: " . ($id_check ? 'YES' : 'NO') . "</p>";
+            
+            // Check user match
+            $sql = "SELECT user_id FROM irrigation_templates WHERE id = ?";
+            $stmt = $conn->prepare($sql);
+            $stmt->bind_param("i", $template_id);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            $row = $result->fetch_assoc();
+            $stmt->close();
+            $template_user_id = $row['user_id'] ?? null;
+            echo "<p>Template User ID: $template_user_id</p>";
+            echo "<p>Your User ID: $user_id</p>";
+            echo "<p>User matches: " . ($template_user_id == $user_id ? 'YES' : 'NO') . "</p>";
+            
+            // Check active status
+            $sql = "SELECT is_active FROM irrigation_templates WHERE id = ?";
+            $stmt = $conn->prepare($sql);
+            $stmt->bind_param("i", $template_id);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            $row = $result->fetch_assoc();
+            $stmt->close();
+            $is_active = $row['is_active'] ?? null;
+            echo "<p>Template active (is_active): " . ($is_active ? 'YES (1)' : 'NO (0)') . "</p>";
+        }
+    } else {
+        echo "<p class='error'>✗ Query FAILED: " . $stmt->error . "</p>";
+    }
+} else {
+    echo "<p class='warning'>⚠ No template ID to test with</p>";
+}
+echo "</div>";
+
+// Test crop varieties table
+echo "<div class='debug-section'>";
+echo "<h3>10. Crop Varieties Test</h3>";
+$sql = "SELECT COUNT(*) as count FROM template_crop_varieties";
+$result = $conn->query($sql);
+$row = $result->fetch_assoc();
+echo "<p>Total crop varieties in database: {$row['count']}</p>";
+
+if ($template_id > 0) {
+    $sql = "SELECT COUNT(*) as count FROM template_crop_varieties WHERE template_id = ?";
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("i", $template_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $row = $result->fetch_assoc();
+    $stmt->close();
+    echo "<p>Crop varieties for template ID $template_id: {$row['count']}</p>";
+}
+echo "</div>";
+
+// Summary
+echo "<div class='debug-section alert alert-info'>";
+echo "<h3>Summary</h3>";
+echo "<ol>";
+echo "<li>Check if you're logged in with the right user</li>";
+echo "<li>Check if the template ID in URL is correct</li>";
+echo "<li>Check if you own the template (user_id matches)</li>";
+echo "<li>Check if template is active (is_active = 1)</li>";
+echo "<li>Check if tables exist in database</li>";
+echo "</ol>";
+
+echo "<h4>Common Solutions:</h4>";
+echo "<ul>";
+echo "<li><strong>If you have no templates:</strong> Go to <a href='quotation.php'>quotation.php</a> and create one</li>";
+echo "<li><strong>If template belongs to wrong user:</strong> Check your session/login</li>";
+echo "<li><strong>If template is inactive:</strong> You might need to restore it from database</li>";
+echo "<li><strong>If tables don't exist:</strong> Run your database setup script again</li>";
+echo "</ul>";
+echo "</div>";
+
+// Quick actions
+echo "<div class='text-center mt-4'>";
+echo "<a href='quotation.php' class='btn btn-primary me-2'>Go to Templates Page</a>";
+echo "<a href='test_template_debug.php' class='btn btn-secondary me-2'>Refresh Test</a>";
+echo "<a href='logout.php' class='btn btn-outline-danger'>Logout & Test Login</a>";
+echo "</div>";
+
+echo "</div>"; // Close container
+echo "</body>";
+echo "</html>";
+
+// Close connection
+if (isset($conn)) {
+    $conn->close();
+}
+?>
